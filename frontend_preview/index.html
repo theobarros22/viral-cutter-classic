@@ -271,9 +271,27 @@
     .motion-caption.shake { animation: caption-shake .75s infinite; color: #ff5574; }
     .motion-caption.narrative { animation: caption-up 1.8s infinite; text-transform: none; font-family: Georgia, serif; font-weight: 700; }
     .motion-caption.typewriter { animation: none; text-transform: none; font-family: monospace; }
+    .motion-caption.word-by-word { animation: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+    .motion-caption.word-by-word span {
+      opacity: .2; transform: translateY(8px) scale(.82);
+      animation: word-focus 2.4s infinite;
+    }
+    .motion-caption.word-by-word span:nth-child(2) { animation-delay: .4s; }
+    .motion-caption.word-by-word span:nth-child(3) { animation-delay: .8s; }
+    .motion-caption.word-by-word span:nth-child(4) { animation-delay: 1.2s; }
+    .motion-caption.word-by-word span:nth-child(5) { animation-delay: 1.6s; }
+    .motion-caption.word-solid span { font-family: Archivo, Arial, sans-serif; font-weight: 900; }
+    .motion-caption.word-condensed span { font-family: Impact, "Arial Narrow", sans-serif; font-weight: 900; letter-spacing: .5px; }
+    .motion-caption.word-editorial span { font-family: Georgia, serif; font-weight: 700; text-transform: none; font-style: italic; }
+    .motion-caption.word-tech span { font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: .78em; }
     @keyframes caption-pop { 0%,22%{transform:scale(.72);opacity:0} 38%{transform:scale(1.08);opacity:1} 50%,88%{transform:scale(1)} 100%{opacity:0} }
     @keyframes caption-shake { 0%,20%{transform:scale(.7);opacity:0} 35%{transform:scale(1.12) rotate(-2deg);opacity:1} 45%{transform:rotate(2deg)} 55%{transform:rotate(-1deg)} 70%,90%{transform:scale(1)} 100%{opacity:0} }
     @keyframes caption-up { 0%,20%{transform:translateY(22px);opacity:0} 42%,88%{transform:translateY(0);opacity:1} 100%{opacity:0} }
+    @keyframes word-focus {
+      0%,15%,100% { opacity:.2; transform:translateY(8px) scale(.82); color:#fff; }
+      22%,38% { opacity:1; transform:translateY(0) scale(1.14); color:var(--orange-bright); }
+      48%,82% { opacity:.72; transform:translateY(0) scale(1); color:#fff; }
+    }
     .motion-timeline { background: #0c0a10; border-top: 1px solid var(--line); padding: 10px; }
     .motion-lane { display: grid; grid-template-columns: 55px 1fr; gap: 6px; min-height: 34px; margin: 4px 0; }
     .motion-lane label { color: var(--muted); font-size: 8px; display: flex; align-items: center; }
@@ -504,6 +522,10 @@
                 <button class="template-card" data-motion="counter"><div class="template-preview" style="font-size:24px;color:var(--lime)">50.000+</div><b>Dado & Número</b><br><small>Contador e hierarquia tipográfica</small></button>
                 <button class="template-card" data-motion="political"><div class="template-preview" style="border-left:4px solid #e9bf58;background:#182039">FALA POLÍTICA</div><b>Político</b><br><small>Barra institucional e destaque</small></button>
                 <button class="template-card" data-motion="tiktok"><div class="template-preview"><span style="color:#61e8ff">VOCÊ</span>&nbsp;<span style="color:#ff6a8f">SABIA?</span></div><b>TikTok Pop</b><br><small>Palavra por palavra em duas cores</small></button>
+                <button class="template-card" data-motion="wordSolid"><div class="template-preview" style="font-family:Archivo,sans-serif;font-size:17px"><span style="color:var(--orange-bright)">VOCÊ</span>&nbsp;PODE&nbsp;MUDAR</div><b>Palavra · Sólida</b><br><small>Archivo Black com foco palavra a palavra</small></button>
+                <button class="template-card" data-motion="wordCondensed"><div class="template-preview" style="font-family:Impact,Arial Narrow,sans-serif;font-size:19px">NÃO IGNORE ISSO</div><b>Palavra · Condensada</b><br><small>Impacto máximo para hooks rápidos</small></button>
+                <button class="template-card" data-motion="wordEditorial"><div class="template-preview" style="font-family:Georgia,serif;text-transform:none;font-style:italic">Essa história importa</div><b>Palavra · Editorial</b><br><small>Serif elegante para narrativa e opinião</small></button>
+                <button class="template-card" data-motion="wordTech"><div class="template-preview" style="font-family:IBM Plex Mono,monospace;font-size:13px">DADOS MUDAM DECISÕES</div><b>Palavra · Mono Tech</b><br><small>Visual técnico para dados e autoridade</small></button>
               </div>
             </aside>
             <div class="motion-stage">
@@ -521,7 +543,8 @@
               <div class="setting"><label>REDE SOCIAL</label><select id="platform-preset"><option>TikTok · 1080×1920</option><option>Instagram Reels · 1080×1920</option><option>YouTube Shorts · 1080×1920</option><option>Facebook Reels · 1080×1920</option></select></div>
               <div class="setting"><label>ZONA SEGURA</label><select><option>Automática pela plataforma</option><option>Conservadora</option><option>Máximo aproveitamento</option></select></div>
               <div class="setting"><label>TEXTO</label><input value="A mudança começa agora"></div>
-              <div class="setting"><label>FONTE</label><select><option>Montserrat Black</option><option>Anton</option><option>Bebas Neue</option><option>Playfair Display</option><option>Inter</option></select></div>
+              <div class="setting"><label>FONTE</label><select><option>Archivo Black</option><option>Impact Condensed</option><option>Georgia Editorial</option><option>IBM Plex Mono</option><option>Montserrat Black</option><option>Anton</option><option>Bebas Neue</option><option>Playfair Display</option><option>Inter</option></select></div>
+              <div class="setting"><label>RITMO DA LEGENDA</label><select><option>Palavra por palavra</option><option>2 palavras por bloco</option><option>Frase curta</option><option>Sentença completa</option></select></div>
               <div class="setting"><label>ENTRADA</label><select><option>Spring Pop</option><option>Slide Up</option><option>Typewriter</option><option>Shake</option><option>Fade</option></select></div>
               <div class="setting"><label>SAÍDA</label><select><option>Fade rápido</option><option>Scale down</option><option>Slide lateral</option><option>Sem saída</option></select></div>
               <div class="property-row"><label>Tamanho</label><input type="range" min="30" max="120" value="72"><span class="value">72px</span></div>
@@ -575,7 +598,11 @@
       typewriter: ['Você precisa saber isso_', 'typewriter'],
       counter: ['MAIS DE <span class="hot">50.000</span> PESSOAS', ''],
       political: ['O BRASIL PRECISA OUVIR ISSO', ''],
-      tiktok: ['<span style="color:#61e8ff">VOCÊ</span> <span style="color:#ff6a8f">SABIA?</span>', '']
+      tiktok: ['<span style="color:#61e8ff">VOCÊ</span> <span style="color:#ff6a8f">SABIA?</span>', ''],
+      wordSolid: ['<span>VOCÊ</span><span>PODE</span><span>MUDAR</span><span>AGORA</span>', 'word-by-word word-solid'],
+      wordCondensed: ['<span>NÃO</span><span>IGNORE</span><span>ISSO</span>', 'word-by-word word-condensed'],
+      wordEditorial: ['<span>Essa</span><span>história</span><span>realmente</span><span>importa</span>', 'word-by-word word-editorial'],
+      wordTech: ['<span>DADOS</span><span>MUDAM</span><span>BOAS</span><span>DECISÕES</span>', 'word-by-word word-tech']
     };
     document.querySelectorAll('[data-motion]').forEach(card => card.addEventListener('click', () => {
       document.querySelectorAll('[data-motion]').forEach(x => x.classList.remove('active'));
