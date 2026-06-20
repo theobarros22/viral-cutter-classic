@@ -1,0 +1,10 @@
+anthropic
+gradio
+matplotlib
+mediapipe
+numpy
+openai-whisper
+opencv-python
+pydub
+pyinstaller
+torch

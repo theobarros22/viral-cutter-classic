@@ -1,0 +1,25 @@
+{
+  "projeto": "Vollare Viral Cutter",
+  "versao_executavel": "2.2.3",
+  "data_snapshot": "2026-06-20",
+  "workspace": "C:\\Users\\Theo Barros\\Claude\\Projects\\CORTE VIRAL",
+  "fonte_principal": "D:\\CORTE VIRAL\\files",
+  "executavel": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter\\ViralCutter.exe",
+  "frontend_preview": "frontend_preview\\index.html",
+  "frontend_url_local": "http://127.0.0.1:8765",
+  "formato_editor": "vertical 9:16",
+  "redes": [
+    "TikTok",
+    "Instagram Reels",
+    "YouTube Shorts",
+    "Facebook Reels"
+  ],
+  "foco": [
+    "cortes virais",
+    "legendas virais",
+    "motion graphics",
+    "processamento local",
+    "retomada por checkpoint"
+  ],
+  "proxima_entrega": "frontend React + pywebview + Remotion"
+}

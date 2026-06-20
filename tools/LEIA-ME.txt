@@ -1,0 +1,8 @@
+Coloque nesta pasta:
+
+- ffmpeg.exe
+- ffprobe.exe
+
+O gerar_exe.bat verifica essas ferramentas e o PyInstaller as inclui dentro
+do Viral Cutter. Assim, o computador do usuário final não precisa instalar ou
+configurar FFmpeg manualmente.

@@ -1,0 +1,529 @@
+"""
+enquadramento.py
+----------------
+Enquadramento estilo editor profissional de podcast — VERSÃO POR CENA.
+
+O QUE MUDOU (e por quê):
+
+Antes, a posição das pessoas era calculada UMA vez, na média do clipe
+inteiro. Problema: podcasts têm várias câmeras. Quando o vídeo corta de
+uma câmera fechada para um plano aberto, as pessoas mudam de lugar no
+quadro — e o crop fixo apontava para a mesa vazia.
+
+Agora o fluxo é:
+
+1. Detecta os CORTES DE CENA dentro do clipe (mudança brusca de imagem)
+2. Para CADA CENA, detecta onde os rostos estão NAQUELA cena
+3. Decide o modo por cena:
+   - 0 rostos  → CENTRAL (é B-roll / plano de corte, sem gente mesmo)
+   - 1 rosto   → SOLO fixo naquela pessoa
+   - 2+ rostos → alterna SOLO_A / SOLO_B / SPLIT seguindo quem fala
+4. Cortes SECOS, enquadramento estático dentro de cada shot
+
+Regras mantidas:
+- Nunca corta cabeça — crop sempre centralizado no rosto detectado
+- Split screen: cada metade centralizada em uma pessoa
+- Duração mínima por modo (evita cortes nervosos demais)
+"""
+
+import cv2
+import numpy as np
+import subprocess
+import json
+import os
+from ffmpeg_utils import argumentos_encoder
+
+
+# ── Configurações ─────────────────────────────────────────────────────────────
+
+RESOLUCOES = {
+    "720p":  (405,  720),
+    "1080p": (1080, 1920),
+    "4k":    (2160, 3840),
+}
+
+# Tempo mínimo num modo antes de cortar (evita cortes rápidos demais)
+DURACAO_MINIMA_MODO = 1.5  # segundos
+
+# Tempo que uma pessoa precisa falar SOZINHA para sair do SPLIT e ir pra SOLO
+TEMPO_FALA_EXCLUSIVA_PARA_SOLO = 3.0  # segundos
+
+# Tempo mínimo que o SPLIT persiste depois que os dois param de falar
+PERSISTENCIA_SPLIT = 2.0  # segundos
+
+# Diferença média de pixels (0-255) entre frames para considerar corte de cena
+LIMIAR_CORTE_CENA = 28.0
+
+# Duração mínima de uma cena (cenas menores são fundidas com a anterior)
+DURACAO_MINIMA_CENA = 0.5  # segundos
+
+# Quantos frames analisar por cena para achar os rostos
+AMOSTRAS_POR_CENA = 6
+INTERPOLACAO_EXPORT = cv2.INTER_LINEAR
+PASSO_DETECCAO_CENA = 2
+
+
+def aplicar_enquadramento(
+    caminho_entrada: str,
+    caminho_saida: str,
+    posicoes_falante: list,
+    pessoas_priorizadas: list = None,
+    qualidade: str = "1080p",
+    perfil: str = "equilibrado",
+) -> bool:
+    """
+    Aplica enquadramento 9:16 ciente dos cortes de cena.
+
+    Assinatura idêntica à versão anterior — o pipeline.py não muda.
+    """
+    saida_w, saida_h = RESOLUCOES.get(qualidade, (1080, 1920))
+
+    info = _obter_info_video(caminho_entrada)
+    largura = info["largura"]
+    altura  = info["altura"]
+    fps     = info["fps"]
+
+    print(f"🎬 Enquadramento por cena {qualidade} ({saida_w}x{saida_h})...")
+
+    # ── Passo 1: Detecta os cortes de cena dentro do clipe ────────────────
+    print("   🎞️ Detectando cortes de cena...")
+    passo_cena = 4 if perfil == "rapido" else (1 if perfil == "qualidade" else 2)
+    amostras_cena = 3 if perfil == "rapido" else (8 if perfil == "qualidade" else 6)
+    cenas = _detectar_cenas(caminho_entrada, fps, passo=passo_cena)
+    print(f"   📊 {len(cenas)} cena(s) encontrada(s) no clipe")
+
+    # ── Passo 2: Analisa os rostos DENTRO de cada cena ────────────────────
+    print("   🔍 Detectando rostos em cada cena...")
+    cenas = _analisar_rostos_por_cena(
+        caminho_entrada, cenas, amostras_por_cena=amostras_cena
+    )
+
+    for c in cenas:
+        if c["n_pessoas"] == 0:
+            desc = "sem pessoas → crop central"
+        elif c["n_pessoas"] == 1:
+            desc = f"1 pessoa em x={c['lado_a']:.2f}"
+        else:
+            desc = f"2 lados: A={c['lado_a']:.2f} B={c['lado_b']:.2f}"
+        print(f"      Cena {c['frame_ini']}–{c['frame_fim']}: {desc}")
+
+    # ── Passo 3: Gera o plano de enquadramento frame a frame ──────────────
+    total_frames = cenas[-1]["frame_fim"] if cenas else 0
+    plano = _gerar_plano(cenas, posicoes_falante, fps, total_frames)
+
+    # ── Passo 4: Processa frame a frame ───────────────────────────────────
+    crop_w_916 = int(altura * 9 / 16)
+    if crop_w_916 % 2 != 0:
+        crop_w_916 -= 1
+    metade_h = saida_h // 2
+
+    cap = cv2.VideoCapture(caminho_entrada)
+    if not cap.isOpened():
+        cap.release()
+        print("   ⚠️ Não foi possível abrir o vídeo para enquadramento.")
+        return False
+
+    # Envia frames diretamente para o FFmpeg. Antes o programa criava um MP4
+    # temporário inteiro e depois codificava tudo novamente em uma segunda
+    # passagem, dobrando tempo, disco e perda de qualidade.
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "rawvideo", "-pix_fmt", "bgr24",
+        "-s", f"{saida_w}x{saida_h}", "-r", str(fps), "-i", "-",
+        "-i", caminho_entrada,
+        "-map", "0:v", "-map", "1:a?",
+    ]
+    cmd += argumentos_encoder(temporario=False)
+    cmd += [
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-shortest",
+        "-movflags", "+faststart",
+        caminho_saida,
+    ]
+    processo_ffmpeg = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+    print(f"   🎞️ Processando {total_frames} frames...")
+    frame_idx = 0
+    erro_pipe = False
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Pega o plano deste frame (modo + posições)
+        if frame_idx < len(plano):
+            p = plano[frame_idx]
+        else:
+            p = plano[-1] if plano else {"modo": "CENTRAL", "xa": 0.5, "xb": 0.5}
+
+        modo = p["modo"]
+
+        if modo in ("SOLO_A", "SOLO_B", "CENTRAL"):
+            x_alvo = p["xa"] if modo != "SOLO_B" else p["xb"]
+            x_crop = _calcular_x_crop(x_alvo, largura, crop_w_916)
+            cortado = frame[0:altura, x_crop:x_crop + crop_w_916]
+            frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
+
+        else:  # SPLIT
+            proporcao_metade = saida_w / metade_h
+            split_crop_w = int(altura * proporcao_metade)
+            if split_crop_w > largura:
+                split_crop_w = largura
+            if split_crop_w % 2 != 0:
+                split_crop_w -= 1
+
+            x_sa = _calcular_x_crop(p["xa"], largura, split_crop_w)
+            crop_a = frame[0:altura, x_sa:x_sa + split_crop_w]
+            topo = cv2.resize(crop_a, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
+
+            x_sb = _calcular_x_crop(p["xb"], largura, split_crop_w)
+            crop_b = frame[0:altura, x_sb:x_sb + split_crop_w]
+            baixo = cv2.resize(crop_b, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
+
+            frame_final = np.vstack([topo, baixo])
+            frame_final[metade_h - 1:metade_h + 1, :] = [30, 30, 30]
+
+        try:
+            processo_ffmpeg.stdin.write(frame_final.tobytes())
+        except (BrokenPipeError, OSError):
+            erro_pipe = True
+            break
+        frame_idx += 1
+
+        if frame_idx % 200 == 0 and total_frames > 0:
+            pct = int((frame_idx / total_frames) * 100)
+            print(f"   ⏳ {pct}% ({frame_idx}/{total_frames} frames)")
+
+    cap.release()
+    if processo_ffmpeg.stdin:
+        try:
+            processo_ffmpeg.stdin.close()
+        except (BrokenPipeError, OSError):
+            erro_pipe = True
+    stderr = processo_ffmpeg.stderr.read().decode("utf-8", errors="replace")
+    codigo = processo_ffmpeg.wait()
+
+    if codigo == 0 and not erro_pipe:
+        print("   ✅ Enquadramento concluído!")
+    else:
+        print(f"   ⚠️ Erro no FFmpeg ao exportar: {stderr[-600:]}")
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+
+    return codigo == 0 and not erro_pipe
+
+
+# ── Detecção de cortes de cena ────────────────────────────────────────────────
+
+def _detectar_cenas(caminho_video: str, fps: float, passo: int = PASSO_DETECCAO_CENA) -> list:
+    """
+    Detecta os cortes de cena comparando frames consecutivos.
+
+    Como funciona: cada frame é reduzido para 96x54 em tons de cinza.
+    Se a diferença média entre um frame e o anterior passa do limiar,
+    é um corte de cena (mudança de câmera, B-roll etc).
+
+    Retorna lista de cenas: [{"frame_ini": 0, "frame_fim": 120}, ...]
+    """
+    cap = cv2.VideoCapture(caminho_video)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    cortes = [0]  # o frame 0 sempre inicia a primeira cena
+    anterior = None
+    frame_idx = 0
+    min_frames_cena = max(1, int(fps * DURACAO_MINIMA_CENA))
+
+    while cap.isOpened():
+        ret = cap.grab()
+        if not ret:
+            break
+
+        if frame_idx % max(1, passo) != 0:
+            frame_idx += 1
+            continue
+
+        ret, frame = cap.retrieve()
+        if not ret:
+            frame_idx += 1
+            continue
+
+        # Versão minúscula em cinza — comparação barata e estável
+        mini = cv2.cvtColor(cv2.resize(frame, (96, 54)), cv2.COLOR_BGR2GRAY)
+
+        if anterior is not None:
+            diferenca = float(np.mean(cv2.absdiff(mini, anterior)))
+            # Corte de cena = diferença alta E cena anterior não é curta demais
+            if diferenca > LIMIAR_CORTE_CENA and (frame_idx - cortes[-1]) >= min_frames_cena:
+                cortes.append(frame_idx)
+
+        anterior = mini
+        frame_idx += 1
+
+    cap.release()
+    total_real = frame_idx if frame_idx > 0 else total_frames
+
+    # Monta a lista de cenas a partir dos cortes
+    cenas = []
+    for i, ini in enumerate(cortes):
+        fim = cortes[i + 1] if i + 1 < len(cortes) else total_real
+        cenas.append({"frame_ini": ini, "frame_fim": fim})
+
+    if not cenas:
+        cenas = [{"frame_ini": 0, "frame_fim": total_real}]
+
+    return cenas
+
+
+# ── Análise de rostos por cena ────────────────────────────────────────────────
+
+def _analisar_rostos_por_cena(
+    caminho_video: str,
+    cenas: list,
+    amostras_por_cena: int = AMOSTRAS_POR_CENA,
+) -> list:
+    """
+    Para cada cena, amostra alguns frames e detecta onde os rostos estão.
+
+    Preenche em cada cena:
+    - n_pessoas: 0, 1 ou 2 (2 = dois lados/grupos)
+    - lado_a: posição X normalizada do lado esquerdo (ou da pessoa única)
+    - lado_b: posição X normalizada do lado direito
+    """
+    from rostos import _inicializar_detector, _fechar_detector, detectar_rostos_robusto
+
+    detector = _inicializar_detector()
+    cap = cv2.VideoCapture(caminho_video)
+
+    for cena in cenas:
+        posicoes_x = []
+
+        if detector is not None:
+            n_frames_cena = cena["frame_fim"] - cena["frame_ini"]
+            n_amostras = min(amostras_por_cena, max(1, n_frames_cena))
+            passo = max(1, n_frames_cena // n_amostras)
+
+            for k in range(n_amostras):
+                alvo = cena["frame_ini"] + k * passo
+                if alvo >= cena["frame_fim"]:
+                    break
+                cap.set(cv2.CAP_PROP_POS_FRAMES, alvo)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                rostos = detectar_rostos_robusto(frame, detector)
+                for r in rostos:
+                    posicoes_x.append(r["x"])
+
+        # Agrupa as posições encontradas NESTA cena
+        cena.update(_agrupar_posicoes_cena(posicoes_x))
+
+    cap.release()
+    if detector is not None:
+        _fechar_detector(detector)
+
+    return cenas
+
+
+def _agrupar_posicoes_cena(posicoes_x: list) -> dict:
+    """
+    Agrupa posições X de rostos de uma cena em 0, 1 ou 2 grupos.
+
+    - Nenhuma posição  → cena sem pessoas (B-roll): crop central
+    - Posições próximas → 1 pessoa (ou grupo): SOLO centralizado nela
+    - Posições espalhadas → 2 lados: divide no maior salto entre posições
+    """
+    if not posicoes_x:
+        return {"n_pessoas": 0, "lado_a": 0.5, "lado_b": 0.5}
+
+    xs = sorted(posicoes_x)
+
+    # Se todas as posições estão num intervalo estreito, é uma pessoa só
+    if xs[-1] - xs[0] < 0.18:
+        centro = float(np.mean(xs))
+        return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro}
+
+    # Duas ou mais pessoas: divide no maior salto entre posições vizinhas
+    saltos = [(xs[i + 1] - xs[i], i) for i in range(len(xs) - 1)]
+    _, idx_divisao = max(saltos)
+
+    grupo_esq = xs[: idx_divisao + 1]
+    grupo_dir = xs[idx_divisao + 1 :]
+
+    return {
+        "n_pessoas": 2,
+        "lado_a": float(np.mean(grupo_esq)),
+        "lado_b": float(np.mean(grupo_dir)),
+    }
+
+
+# ── Plano de enquadramento frame a frame ─────────────────────────────────────
+
+def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: int) -> list:
+    """
+    Gera, para cada frame, o modo e as posições de crop.
+
+    Retorna lista de dicts: [{"modo": "SOLO_A", "xa": 0.3, "xb": 0.7}, ...]
+
+    - Cena sem pessoas → herda modo/posição da cena anterior (nunca mesa vazia)
+    - Cena com 1 pessoa → SOLO_A fixo nela
+    - Cena com 2 lados → SPLIT como padrão, SOLO só com fala exclusiva longa
+    """
+    plano = [None] * total_frames
+
+    # Memória da última cena com pessoas — para herdar quando falhar detecção
+    ultimo_modo_valido = "SPLIT"
+    ultimo_xa = 0.5
+    ultimo_xb = 0.5
+
+    for cena in cenas:
+        ini, fim = cena["frame_ini"], cena["frame_fim"]
+        xa, xb = cena["lado_a"], cena["lado_b"]
+
+        if cena["n_pessoas"] == 0:
+            # Sem rosto detectado nesta cena — NÃO centraliza na mesa.
+            # Herda o enquadramento da última cena que tinha gente.
+            for f in range(ini, min(fim, total_frames)):
+                plano[f] = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb}
+            continue
+
+        if cena["n_pessoas"] == 1:
+            ultimo_modo_valido = "SOLO_A"
+            ultimo_xa = xa
+            ultimo_xb = xa
+            for f in range(ini, min(fim, total_frames)):
+                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa}
+            continue
+
+        # Atualiza memória para cenas com 2 pessoas
+        ultimo_xa = xa
+        ultimo_xb = xb
+
+        # ── 2 lados: SPLIT como padrão, SOLO só com fala exclusiva longa ──
+        x_meio = (xa + xb) / 2
+        frames_para_solo = max(1, int(fps * TEMPO_FALA_EXCLUSIVA_PARA_SOLO))
+        frames_persistencia_split = max(1, int(fps * PERSISTENCIA_SPLIT))
+        min_frames_modo = max(1, int(fps * DURACAO_MINIMA_MODO))
+
+        modo_atual = "SPLIT"  # começa mostrando os dois
+        frame_ultimo_corte = ini
+        contagem_fala_exclusiva_a = 0
+        contagem_fala_exclusiva_b = 0
+        ultimo_frame_ambos_falaram = ini
+
+        for f in range(ini, min(fim, total_frames)):
+            pos = posicoes_falante[f] if f < len(posicoes_falante) else None
+
+            if pos is not None:
+                fala_a = pos < x_meio
+                fala_b = pos >= x_meio
+            else:
+                fala_a = False
+                fala_b = False
+
+            # Atualiza contadores de fala exclusiva
+            if fala_a and not fala_b:
+                contagem_fala_exclusiva_a += 1
+                contagem_fala_exclusiva_b = 0
+            elif fala_b and not fala_a:
+                contagem_fala_exclusiva_b += 1
+                contagem_fala_exclusiva_a = 0
+            else:
+                contagem_fala_exclusiva_a = 0
+                contagem_fala_exclusiva_b = 0
+
+            # Checa conversa na janela recente (1s)
+            janela_conversa = max(1, int(fps * 1.0))
+            ini_janela = max(ini, f - janela_conversa)
+            recentes = [
+                posicoes_falante[j]
+                for j in range(ini_janela, min(f + 1, len(posicoes_falante)))
+                if posicoes_falante[j] is not None
+            ]
+            if recentes:
+                tem_esq = any(p < x_meio for p in recentes)
+                tem_dir = any(p >= x_meio for p in recentes)
+                if tem_esq and tem_dir:
+                    ultimo_frame_ambos_falaram = f
+
+            # Decide o modo
+            if modo_atual == "SPLIT":
+                passou_persistencia = (f - ultimo_frame_ambos_falaram) >= frames_persistencia_split
+                passou_min_modo = (f - frame_ultimo_corte) >= min_frames_modo
+
+                if contagem_fala_exclusiva_a >= frames_para_solo and passou_persistencia and passou_min_modo:
+                    modo_atual = "SOLO_A"
+                    frame_ultimo_corte = f
+                    contagem_fala_exclusiva_a = 0
+                elif contagem_fala_exclusiva_b >= frames_para_solo and passou_persistencia and passou_min_modo:
+                    modo_atual = "SOLO_B"
+                    frame_ultimo_corte = f
+                    contagem_fala_exclusiva_b = 0
+
+            elif modo_atual in ("SOLO_A", "SOLO_B"):
+                passou_min_modo = (f - frame_ultimo_corte) >= min_frames_modo
+
+                if modo_atual == "SOLO_A" and contagem_fala_exclusiva_b > 0 and passou_min_modo:
+                    modo_atual = "SPLIT"
+                    frame_ultimo_corte = f
+                    ultimo_frame_ambos_falaram = f
+                elif modo_atual == "SOLO_B" and contagem_fala_exclusiva_a > 0 and passou_min_modo:
+                    modo_atual = "SPLIT"
+                    frame_ultimo_corte = f
+                    ultimo_frame_ambos_falaram = f
+                elif (f - ultimo_frame_ambos_falaram) < frames_persistencia_split and passou_min_modo:
+                    modo_atual = "SPLIT"
+                    frame_ultimo_corte = f
+
+            plano[f] = {"modo": modo_atual, "xa": xa, "xb": xb}
+
+        # Salva o modo final desta cena pra herança
+        ultimo_modo_valido = modo_atual
+
+    # Preenche buracos — usa último modo válido, nunca CENTRAL
+    ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb}
+    for f in range(total_frames):
+        if plano[f] is None:
+            plano[f] = ultimo
+        else:
+            ultimo = plano[f]
+
+    return plano
+
+
+# ── Utilitários ───────────────────────────────────────────────────────────────
+
+def _calcular_x_crop(x_centro_norm: float, largura: int, crop_w: int) -> int:
+    """
+    Converte posição normalizada (0-1) em coordenada X do crop,
+    garantindo que o crop não saia do frame.
+    """
+    x = int(x_centro_norm * largura - crop_w / 2)
+    return max(0, min(largura - crop_w, x))
+
+
+def _obter_info_video(caminho_video: str) -> dict:
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_streams", "-select_streams", "v:0", caminho_video
+    ]
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    if resultado.returncode != 0 or not resultado.stdout.strip():
+        raise RuntimeError("FFprobe não conseguiu ler as informações do vídeo.")
+    dados = json.loads(resultado.stdout)
+    stream = dados["streams"][0]
+    fps_str = stream.get("r_frame_rate", "30/1")
+    num, den = fps_str.split("/")
+    den = int(den)
+    fps = round(int(num) / den, 2) if den else 30.0
+    return {
+        "largura": int(stream["width"]),
+        "altura":  int(stream["height"]),
+        "fps":     fps,
+    }
+# fim do arquivo — enquadramento por cena v2

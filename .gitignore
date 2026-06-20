@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv311/
+build/
+dist/
+_temp*/
+*.log
+config.json
+tools/ffmpeg.exe
+tools/ffprobe.exe
+backups/
+frontend_preview/.server_pid
+*.zip

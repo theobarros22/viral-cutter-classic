@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Viral Cutter - Preview</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    :root {
+      --bg: #09070f;
+      --panel: #12101a;
+      --panel-2: #1a1625;
+      --line: rgba(255,255,255,.08);
+      --muted: #8e899d;
+      --text: #f8f7fb;
+      --purple: #8b5cf6;
+      --purple-2: #ad83ff;
+      --lime: #dfff57;
+      --green: #47d8a4;
+      --orange: #ff9b55;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 74% -20%, rgba(139,92,246,.22), transparent 34%),
+        var(--bg);
+      font-family: Inter, system-ui, sans-serif;
+      min-height: 100vh;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+    .sidebar {
+      padding: 22px 16px;
+      border-right: 1px solid var(--line);
+      background: rgba(11,9,16,.92);
+      position: sticky; top: 0; height: 100vh;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 24px; }
+    .brand-mark {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      border-radius: 10px; background: linear-gradient(135deg, var(--purple), var(--lime));
+      color: #09070f; font-weight: 900;
+    }
+    .brand strong { font-size: 15px; letter-spacing: -.3px; }
+    .brand small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+    .nav-label { color: #605b6e; font-size: 10px; font-weight: 700; padding: 14px 10px 7px; }
+    .nav-item {
+      width: 100%; border: 0; color: #aaa5b8; background: transparent;
+      display: flex; align-items: center; gap: 11px; padding: 11px 12px;
+      border-radius: 10px; text-align: left; margin: 2px 0;
+    }
+    .nav-item:hover, .nav-item.active { color: white; background: rgba(139,92,246,.14); }
+    .nav-item.active { box-shadow: inset 3px 0 var(--purple); }
+    .nav-icon { width: 20px; text-align: center; }
+    .sidebar-foot { position: absolute; left: 16px; right: 16px; bottom: 18px; }
+    .gpu {
+      background: var(--panel); border: 1px solid var(--line); padding: 12px;
+      border-radius: 12px; font-size: 11px; color: var(--muted);
+    }
+    .gpu b { display: block; color: var(--green); margin-bottom: 5px; }
+    .main { min-width: 0; }
+    .topbar {
+      height: 66px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 28px; border-bottom: 1px solid var(--line);
+      background: rgba(9,7,15,.76); backdrop-filter: blur(18px);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .search {
+      width: 320px; border: 1px solid var(--line); background: var(--panel);
+      color: white; padding: 10px 14px; border-radius: 10px; outline: none;
+    }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .pill {
+      border: 1px solid var(--line); color: var(--muted); background: var(--panel);
+      border-radius: 999px; padding: 9px 13px; font-size: 12px;
+    }
+    .avatar { width: 34px; height: 34px; border-radius: 50%; background: #282133; display: grid; place-items: center; }
+    .content { padding: 28px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .eyebrow { color: var(--purple-2); font-size: 11px; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; }
+    h1 { margin: 7px 0 8px; font-size: 30px; letter-spacing: -1.2px; }
+    .sub { color: var(--muted); margin: 0 0 26px; font-size: 14px; }
+    .hero {
+      display: grid; grid-template-columns: 1.4fr .8fr; gap: 18px; margin-bottom: 24px;
+    }
+    .upload {
+      min-height: 230px; border: 1px dashed rgba(173,131,255,.45); border-radius: 18px;
+      background: linear-gradient(135deg, rgba(139,92,246,.12), rgba(223,255,87,.025));
+      display: grid; place-items: center; text-align: center; padding: 28px;
+    }
+    .upload-icon { font-size: 34px; }
+    .upload h3 { margin: 12px 0 6px; }
+    .upload p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+    .primary {
+      border: 0; background: linear-gradient(135deg, var(--purple), #6d42e8);
+      color: white; padding: 11px 16px; border-radius: 10px; font-weight: 700;
+      box-shadow: 0 12px 30px rgba(139,92,246,.25);
+    }
+    .secondary {
+      border: 1px solid var(--line); background: var(--panel-2); color: white;
+      padding: 10px 14px; border-radius: 10px;
+    }
+    .resume-card {
+      border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+      background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    }
+    .resume-card h3 { margin: 8px 0; }
+    .resume-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .progress { height: 7px; background: #282332; border-radius: 10px; overflow: hidden; margin: 18px 0 9px; }
+    .progress span { display: block; height: 100%; width: 64%; background: linear-gradient(90deg, var(--purple), var(--lime)); }
+    .progress-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 14px; }
+    .section-head h2 { margin: 0; font-size: 18px; }
+    .projects, .clips { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
+    .project, .clip {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 15px; overflow: hidden;
+      transition: .18s ease;
+    }
+    .project:hover, .clip:hover { transform: translateY(-2px); border-color: rgba(139,92,246,.45); }
+    .thumb {
+      aspect-ratio: 16/9; position: relative; overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(139,92,246,.55), rgba(10,8,16,.1)),
+        radial-gradient(circle at 65% 32%, #d59e72 0 8%, transparent 9%),
+        linear-gradient(120deg, #2c223c, #0e0b13);
+    }
+    .thumb::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(0,0,0,.72)); }
+    .duration { position: absolute; z-index: 1; right: 9px; bottom: 8px; font-size: 10px; background: rgba(0,0,0,.75); padding: 4px 6px; border-radius: 5px; }
+    .project-body, .clip-body { padding: 13px; }
+    .project-body h3, .clip-body h3 { margin: 0 0 7px; font-size: 13px; }
+    .meta { color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 8px; }
+    .status { color: var(--green); }
+    .workspace { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 16px; }
+    .pro-editor {
+      display: grid; grid-template-columns: 260px minmax(0,1fr);
+      min-height: 650px; border: 1px solid var(--line); border-radius: 16px;
+      overflow: hidden; background: #07060a;
+    }
+    .inspector {
+      background: #131119; border-right: 1px solid var(--line);
+      padding: 14px; overflow: auto;
+    }
+    .inspector-tabs { display: flex; gap: 5px; margin-bottom: 14px; }
+    .tool-tab {
+      width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 8px;
+      color: var(--muted); background: #0c0a10;
+    }
+    .tool-tab.active { color: white; border-color: var(--purple); background: rgba(139,92,246,.17); }
+    .property-group { border-top: 1px solid var(--line); padding: 14px 0; }
+    .property-title { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 700; }
+    .property-row { display: grid; grid-template-columns: 62px 1fr 46px; gap: 7px; align-items: center; margin-top: 11px; }
+    .property-row label { color: var(--muted); font-size: 9px; }
+    .property-row input[type=range] { width: 100%; accent-color: var(--purple); }
+    .value { color: #c7c1d2; font-size: 9px; text-align: right; }
+    .checkline { display: flex; align-items: center; gap: 8px; margin-top: 11px; color: #bcb6c8; font-size: 10px; }
+    .checkline input { accent-color: var(--purple); }
+    .editor-main { min-width: 0; display: grid; grid-template-rows: minmax(380px,1fr) 230px; }
+    .preview-area { background: #040306; padding: 18px; display: grid; grid-template-rows: 34px 1fr 38px; }
+    .preview-toolbar, .transport { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
+    .preview-screen {
+      position: relative; margin: 6px auto; width: min(78%, 780px); aspect-ratio: 16/9;
+      background:
+        linear-gradient(180deg, transparent 65%, rgba(0,0,0,.62)),
+        radial-gradient(circle at 60% 35%, #b87555 0 8%, transparent 9%),
+        radial-gradient(circle at 43% 34%, #d4a17d 0 8%, transparent 9%),
+        linear-gradient(130deg, #4c372a, #171319);
+      border: 1px solid #28232e; overflow: hidden;
+    }
+    .safe-frame { position: absolute; inset: 8%; border: 1px dashed rgba(223,255,87,.5); }
+    .detect-box { position: absolute; width: 110px; height: 145px; border: 2px solid var(--purple-2); left: 39%; top: 20%; }
+    .detect-box.two { left: 58%; width: 100px; }
+    .preview-caption { position: absolute; bottom: 22px; left: 20%; right: 20%; text-align: center; font-weight: 800; font-size: 15px; text-shadow: 0 2px 8px black; }
+    .preview-caption b { color: var(--lime); }
+    .transport-center { display: flex; align-items: center; gap: 8px; }
+    .round-btn { width: 29px; height: 29px; border-radius: 50%; border: 1px solid var(--line); background: #15121b; color: white; }
+    .timeline-pro { background: #0c0a10; border-top: 1px solid var(--line); display: grid; grid-template-rows: 30px 1fr; overflow: hidden; }
+    .timeline-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+    .ruler { display: grid; grid-template-columns: 58px repeat(10,1fr); gap: 0; padding: 7px 8px 2px; color: #716b7d; font-size: 8px; }
+    .ruler span:first-child { color: transparent; }
+    .tracks-pro { padding: 0 8px 10px; overflow: auto; }
+    .track-pro { display: grid; grid-template-columns: 58px 1fr; gap: 6px; min-height: 38px; margin: 4px 0; }
+    .track-name { display: flex; align-items: center; gap: 5px; color: #777180; font-size: 8px; }
+    .track-lane { position: relative; background: rgba(255,255,255,.025); border-radius: 4px; overflow: hidden; }
+    .timeline-clip { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; padding: 5px 7px; font-size: 8px; overflow: hidden; white-space: nowrap; color: white; border: 1px solid rgba(255,255,255,.12); }
+    .timeline-clip.video { background: linear-gradient(90deg,#7453d7,#4f35a5); }
+    .timeline-clip.audio { background: linear-gradient(90deg,#127e73,#195d61); }
+    .timeline-clip.caption-track { background: linear-gradient(90deg,#aa6b32,#754420); }
+    .timeline-clip.focus { outline: 2px solid var(--lime); }
+    .playhead { position: absolute; left: 46%; top: 0; bottom: 0; width: 1px; background: #ff5e7d; z-index: 4; }
+    .playhead::before { content:""; position:absolute; top:0; left:-4px; width:9px; height:9px; background:#ff5e7d; clip-path:polygon(0 0,100% 0,50% 100%); }
+    .stage {
+      background: #050408; border: 1px solid var(--line); min-height: 460px;
+      border-radius: 16px; padding: 18px; display: grid; grid-template-rows: auto 1fr auto;
+    }
+    .stage-head, .stage-foot { display: flex; align-items: center; justify-content: space-between; }
+    .video-canvas { display: grid; place-items: center; padding: 18px; }
+    .phone {
+      height: 330px; aspect-ratio: 9/16; border-radius: 13px; border: 2px solid var(--purple);
+      background:
+        linear-gradient(180deg, transparent 50%, rgba(0,0,0,.7)),
+        radial-gradient(circle at 48% 30%, #d49a72 0 10%, transparent 11%),
+        linear-gradient(135deg, #4c3661, #17101d);
+      position: relative; box-shadow: 0 20px 70px rgba(139,92,246,.18);
+    }
+    .face-box { position: absolute; width: 86px; height: 112px; border: 2px solid var(--lime); left: 45px; top: 62px; }
+    .caption { position: absolute; bottom: 46px; left: 12px; right: 12px; text-align: center; font-size: 13px; font-weight: 800; }
+    .caption b { color: var(--lime); }
+    .timeline { background: #0d0b12; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+    .track { display: grid; grid-template-columns: 36px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+    .track label { color: var(--muted); font-size: 9px; }
+    .segments { height: 18px; display: flex; gap: 3px; }
+    .segments i { display: block; border-radius: 4px; background: var(--purple); }
+    .segments i:nth-child(2n) { background: var(--orange); }
+    .settings {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 17px;
+    }
+    .settings h3 { margin: 0 0 18px; font-size: 14px; }
+    .setting { margin-bottom: 16px; }
+    .setting label { display: block; color: var(--muted); font-size: 10px; margin-bottom: 7px; }
+    .setting select, .setting input {
+      width: 100%; background: #0d0b12; border: 1px solid var(--line); color: white;
+      padding: 10px; border-radius: 9px;
+    }
+    .layout-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+    .layout {
+      border: 1px solid var(--line); background: #0d0b12; color: var(--muted);
+      padding: 11px 4px; border-radius: 8px; font-size: 9px;
+    }
+    .layout.active { color: white; border-color: var(--purple); background: rgba(139,92,246,.16); }
+    .score { position: absolute; left: 10px; top: 10px; z-index: 2; background: var(--lime); color: #101010; padding: 5px 8px; border-radius: 7px; font-weight: 800; font-size: 11px; }
+    .clip-actions { display: flex; gap: 6px; margin-top: 11px; }
+    .clip-actions button { flex: 1; border: 1px solid var(--line); background: #191522; color: #bfb9cc; border-radius: 8px; padding: 7px; font-size: 10px; }
+    .motion-layout { display: grid; grid-template-columns: 220px minmax(0,1fr) 270px; gap: 14px; min-height: 650px; }
+    .motion-library, .motion-controls {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 15px; padding: 14px;
+    }
+    .motion-library h3, .motion-controls h3 { margin: 0 0 12px; font-size: 13px; }
+    .template-list { display: grid; gap: 8px; max-height: 590px; overflow: auto; padding-right: 3px; }
+    .template-card {
+      border: 1px solid var(--line); background: #0d0b12; color: white; border-radius: 10px;
+      padding: 12px; text-align: left;
+    }
+    .template-card.active { border-color: var(--purple); background: rgba(139,92,246,.16); }
+    .template-preview { height: 52px; display: grid; place-items: center; border-radius: 7px; background: #050407; margin-bottom: 8px; font-weight: 900; text-transform: uppercase; overflow: hidden; }
+    .template-card small { color: var(--muted); font-size: 9px; }
+    .motion-stage {
+      background: #050407; border: 1px solid var(--line); border-radius: 15px;
+      display: grid; grid-template-rows: 46px 1fr 190px; overflow: hidden;
+    }
+    .motion-stage-head { padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+    .motion-video { display: grid; place-items: center; padding: 18px; }
+    .motion-phone {
+      height: 360px; aspect-ratio: 9/16; border-radius: 12px; position: relative; overflow: hidden;
+      background:
+        linear-gradient(180deg, transparent 50%, rgba(0,0,0,.8)),
+        radial-gradient(circle at 51% 30%, #bb815e 0 10%, transparent 11%),
+        linear-gradient(135deg, #553b66, #18101d);
+      border: 1px solid #30273a;
+    }
+    .motion-caption {
+      position: absolute; left: 9%; right: 9%; bottom: 22%; text-align: center;
+      font-size: 22px; line-height: 1.05; font-weight: 900; text-transform: uppercase;
+      text-shadow: 0 4px 14px rgba(0,0,0,.9);
+      animation: caption-pop 1.25s infinite;
+    }
+    .motion-caption .hot { color: var(--lime); background: rgba(15,12,20,.85); padding: 2px 7px; border-radius: 6px; }
+    .motion-caption.shake { animation: caption-shake .75s infinite; color: #ff5574; }
+    .motion-caption.narrative { animation: caption-up 1.8s infinite; text-transform: none; font-family: Georgia, serif; font-weight: 700; }
+    .motion-caption.typewriter { animation: none; text-transform: none; font-family: monospace; }
+    @keyframes caption-pop { 0%,22%{transform:scale(.72);opacity:0} 38%{transform:scale(1.08);opacity:1} 50%,88%{transform:scale(1)} 100%{opacity:0} }
+    @keyframes caption-shake { 0%,20%{transform:scale(.7);opacity:0} 35%{transform:scale(1.12) rotate(-2deg);opacity:1} 45%{transform:rotate(2deg)} 55%{transform:rotate(-1deg)} 70%,90%{transform:scale(1)} 100%{opacity:0} }
+    @keyframes caption-up { 0%,20%{transform:translateY(22px);opacity:0} 42%,88%{transform:translateY(0);opacity:1} 100%{opacity:0} }
+    .motion-timeline { background: #0c0a10; border-top: 1px solid var(--line); padding: 10px; }
+    .motion-lane { display: grid; grid-template-columns: 55px 1fr; gap: 6px; min-height: 34px; margin: 4px 0; }
+    .motion-lane label { color: var(--muted); font-size: 8px; display: flex; align-items: center; }
+    .motion-lane div { position: relative; background: rgba(255,255,255,.025); border-radius: 5px; overflow: hidden; }
+    .block { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; font-size: 8px; padding: 5px 7px; white-space: nowrap; overflow: hidden; }
+    .block.words { background: #7049ca; }
+    .block.motion { background: #b85d36; }
+    .block.overlay { background: #2e7e82; }
+    .block.beat { width: 4px; padding: 0; background: var(--lime); }
+
+    /* Identidade Vollare Intelligence */
+    :root {
+      --bg: #000000;
+      --panel: #080808;
+      --panel-2: #0d0d0d;
+      --line: rgba(255,255,255,.11);
+      --muted: #747474;
+      --text: #f5f5f2;
+      --purple: #c63200;
+      --purple-2: #e04408;
+      --lime: #ff4b0a;
+      --green: #d6f36b;
+      --orange: #c63200;
+    }
+    body {
+      font-family: Archivo, Arial, sans-serif;
+      background-color: var(--bg);
+      background-image:
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 86px 86px;
+    }
+    .sidebar, .topbar { background: rgba(0,0,0,.96); backdrop-filter: none; }
+    .brand-mark {
+      border-radius: 0; background: var(--orange); color: white;
+      box-shadow: none;
+    }
+    .brand strong { font-weight: 900; letter-spacing: .3px; text-transform: uppercase; }
+    .brand small, .nav-label, .eyebrow, .setting label, .track-name,
+    .motion-lane label, .timeline-toolbar, .value, .gpu, .meta {
+      font-family: "IBM Plex Mono", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .nav-label { color: #434343; letter-spacing: .18em; }
+    .nav-item { border-radius: 0; }
+    .nav-item:hover, .nav-item.active { background: rgba(198,50,0,.13); }
+    .nav-item.active { box-shadow: inset 3px 0 var(--orange); }
+    .gpu, .search, .pill, .avatar, .upload, .resume-card, .project, .clip,
+    .pro-editor, .inspector, .settings, .motion-library, .motion-controls,
+    .motion-stage, .template-card, .template-preview, .stage, .timeline,
+    .secondary, .primary, .tool-tab, .layout, .round-btn, select, input {
+      border-radius: 0 !important;
+    }
+    .content { max-width: 1500px; }
+    h1 { font-size: 38px; font-weight: 900; letter-spacing: -2px; }
+    .eyebrow { color: var(--orange); letter-spacing: .22em; }
+    .primary {
+      background: var(--orange); box-shadow: none; text-transform: uppercase;
+      letter-spacing: .08em; font-size: 11px;
+    }
+    .primary:hover { background: #ed4608; }
+    .secondary { background: transparent; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+    .upload { border-color: rgba(198,50,0,.65); background: rgba(198,50,0,.045); }
+    .progress span { background: var(--orange); }
+    .project:hover, .clip:hover { border-color: rgba(198,50,0,.75); }
+    .thumb {
+      background:
+        linear-gradient(135deg, rgba(198,50,0,.5), rgba(0,0,0,.2)),
+        radial-gradient(circle at 65% 32%, #d59e72 0 8%, transparent 9%),
+        linear-gradient(120deg, #292929, #050505);
+    }
+    .score { background: var(--orange); color: white; }
+    .tool-tab.active, .layout.active, .template-card.active {
+      border-color: var(--orange); background: rgba(198,50,0,.16);
+    }
+    .property-row input[type=range], .checkline input { accent-color: var(--orange); }
+    .safe-frame { border-color: rgba(255,75,10,.65); }
+    .detect-box { border-color: var(--orange); }
+    .phone, .motion-phone {
+      border-color: var(--orange);
+      box-shadow: 0 20px 70px rgba(198,50,0,.12);
+    }
+    .preview-caption b, .motion-caption .hot { color: white; background: var(--orange); }
+    .timeline-clip.video, .block.words { background: linear-gradient(90deg,#c63200,#7f2100); }
+    .timeline-clip.focus { outline-color: #ff6a2e; }
+    .timeline-clip.caption-track, .block.motion { background: linear-gradient(90deg,#df5c23,#8e310d); }
+    .block.beat { background: #ff6a2e; }
+    @media (max-width: 950px) {
+      .app { grid-template-columns: 74px 1fr; }
+      .brand div, .nav-item span:not(.nav-icon), .nav-label, .sidebar-foot { display: none; }
+      .hero, .workspace { grid-template-columns: 1fr; }
+      .projects, .clips { grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">V</div><div><strong>Vollare Viral Cutter</strong><small>Intelligence · Video Studio</small></div></div>
+      <div class="nav-label">WORKSPACE</div>
+      <button class="nav-item active" data-view="projects"><span class="nav-icon">⌂</span><span>Projetos</span></button>
+      <button class="nav-item" data-view="analysis"><span class="nav-icon">✦</span><span>Cortes com IA</span></button>
+      <button class="nav-item" data-view="motions"><span class="nav-icon">T✦</span><span>Legendas & Motions</span></button>
+      <button class="nav-item" data-view="editor"><span class="nav-icon">✂</span><span>Editor</span></button>
+      <button class="nav-item" data-view="features"><span class="nav-icon">◆</span><span>Recursos</span></button>
+      <div class="nav-label">BIBLIOTECA</div>
+      <button class="nav-item"><span class="nav-icon">▣</span><span>Meus vídeos</span></button>
+      <button class="nav-item"><span class="nav-icon">▤</span><span>Templates</span></button>
+      <button class="nav-item"><span class="nav-icon">◎</span><span>Brand kit</span></button>
+      <div class="nav-label">SISTEMA</div>
+      <button class="nav-item"><span class="nav-icon">↻</span><span>Processamentos</span></button>
+      <button class="nav-item"><span class="nav-icon">⚙</span><span>Configurações</span></button>
+      <div class="sidebar-foot"><div class="gpu"><b>● RTX 3050 disponível</b>NVENC ativo · 4,7 GB livres</div></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <input class="search" placeholder="Buscar projetos e cortes...">
+        <div class="top-actions"><span class="pill">V2.3 Preview</span><span class="pill">Local e privado</span><div class="avatar">TB</div></div>
+      </header>
+
+      <div class="content">
+        <section class="view active" id="projects">
+          <div class="eyebrow">Visão geral</div>
+          <h1>Crie cortes que prendem atenção.</h1>
+          <p class="sub">Envie um vídeo, deixe a IA encontrar os melhores momentos e finalize tudo no mesmo lugar.</p>
+          <div class="hero">
+            <div class="upload">
+              <div><div class="upload-icon">↥</div><h3>Envie seu vídeo longo</h3><p>MP4 ou MOV · até 4K · processamento local</p><button class="primary" data-go="analysis">Selecionar vídeo</button></div>
+            </div>
+            <div class="resume-card">
+              <div class="eyebrow">Retomada automática</div>
+              <h3>CORTE 01.mp4</h3>
+              <p>8 de 12 cortes concluídos. Você pode fechar o programa e continuar depois sem perder o progresso.</p>
+              <div class="progress"><span></span></div>
+              <div class="progress-meta"><span>64% concluído</span><span>~18 min restantes</span></div>
+              <button class="secondary" style="width:100%;margin-top:18px" data-go="analysis">Continuar processamento</button>
+            </div>
+          </div>
+          <div class="section-head"><h2>Projetos recentes</h2><button class="secondary">Ver todos</button></div>
+          <div class="projects">
+            <article class="project"><div class="thumb"><span class="duration">01:42:18</span></div><div class="project-body"><h3>Podcast Política em Debate</h3><div class="meta"><span>12 cortes</span><span class="status">Concluído</span></div></div></article>
+            <article class="project"><div class="thumb" style="filter:hue-rotate(36deg)"><span class="duration">48:09</span></div><div class="project-body"><h3>Entrevista Natthalia</h3><div class="meta"><span>8 cortes</span><span class="status">Concluído</span></div></div></article>
+            <article class="project"><div class="thumb" style="filter:hue-rotate(290deg)"><span class="duration">02:13:44</span></div><div class="project-body"><h3>CORTE 01</h3><div class="meta"><span>8 de 12</span><span style="color:var(--orange)">Processando</span></div></div></article>
+          </div>
+        </section>
+
+        <section class="view" id="analysis">
+          <div class="eyebrow">Projeto · CORTE 01</div>
+          <h1>A IA encontrou 12 momentos fortes.</h1>
+          <p class="sub">Revise os cortes, ajuste a prioridade e escolha o que será exportado.</p>
+          <div class="section-head"><h2>Cortes sugeridos</h2><div><button class="secondary">Selecionar todos</button> <button class="primary" data-go="editor">Editar selecionados</button></div></div>
+          <div class="clips">
+            <article class="clip"><div class="thumb"><span class="score">9.7</span><span class="duration">00:47</span></div><div class="clip-body"><h3>O ponto que ninguém percebeu</h3><div class="meta"><span>Gancho forte</span><span>01:12:08</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+            <article class="clip"><div class="thumb" style="filter:hue-rotate(25deg)"><span class="score">9.4</span><span class="duration">01:03</span></div><div class="clip-body"><h3>A resposta mudou o debate</h3><div class="meta"><span>Alta retenção</span><span>00:36:14</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+            <article class="clip"><div class="thumb" style="filter:hue-rotate(310deg)"><span class="score">9.2</span><span class="duration">00:39</span></div><div class="clip-body"><h3>Uma frase que resume tudo</h3><div class="meta"><span>Emocional</span><span>01:28:31</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+            <article class="clip"><div class="thumb" style="filter:hue-rotate(70deg)"><span class="score">8.9</span><span class="duration">00:52</span></div><div class="clip-body"><h3>O dado que surpreendeu a mesa</h3><div class="meta"><span>Informativo</span><span>00:18:02</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+            <article class="clip"><div class="thumb" style="filter:hue-rotate(190deg)"><span class="score">8.7</span><span class="duration">01:11</span></div><div class="clip-body"><h3>Confronto direto entre ideias</h3><div class="meta"><span>Tensão</span><span>01:03:44</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+            <article class="clip"><div class="thumb" style="filter:hue-rotate(240deg)"><span class="score">8.5</span><span class="duration">00:44</span></div><div class="clip-body"><h3>Fechamento com chamada forte</h3><div class="meta"><span>Conclusão</span><span>01:39:12</span></div><div class="clip-actions"><button>▶ Preview</button><button>✎ Editar</button><button>✓</button></div></div></article>
+          </div>
+        </section>
+
+        <section class="view" id="editor">
+          <div class="eyebrow">Editor · Corte 01 de 12</div>
+          <h1>Ajuste o enquadramento e finalize.</h1>
+          <p class="sub">O motor Python continua responsável pelo corte e pela renderização; esta tela controla as decisões.</p>
+          <div class="pro-editor">
+            <aside class="inspector">
+              <div class="inspector-tabs"><button class="tool-tab active">⌖</button><button class="tool-tab">✂</button><button class="tool-tab">T</button><button class="tool-tab">♫</button><button class="tool-tab">◆</button></div>
+              <div class="setting"><label>TIPO DE LAYOUT</label><select><option>Foco automático</option><option>Split vertical</option><option>Plano aberto</option><option>Manual</option></select></div>
+              <div class="property-group">
+                <div class="property-title"><span>☑ Transformação</span><span>⌃</span></div>
+                <div class="property-row"><label>Posição X</label><input type="range" min="0" max="100" value="48"><span class="value">48%</span></div>
+                <div class="property-row"><label>Posição Y</label><input type="range" min="0" max="100" value="50"><span class="value">50%</span></div>
+                <div class="property-row"><label>Escala</label><input type="range" min="50" max="160" value="100"><span class="value">100%</span></div>
+                <div class="property-row"><label>Rotação</label><input type="range" min="-20" max="20" value="0"><span class="value">0°</span></div>
+              </div>
+              <div class="property-group">
+                <div class="property-title"><span>☑ Enquadramento IA</span><span>⌃</span></div>
+                <div class="setting" style="margin-top:12px"><label>PESSOA PRIORITÁRIA</label><select><option>Automático</option><option>Pessoa 1 · esquerda</option><option>Pessoa 2 · direita</option></select></div>
+                <div class="property-row"><label>Suavização</label><input type="range" min="0" max="100" value="64"><span class="value">64%</span></div>
+                <div class="property-row"><label>Zona segura</label><input type="range" min="0" max="100" value="78"><span class="value">78%</span></div>
+                <label class="checkline"><input type="checkbox" checked> Proteger cabeça e mãos</label>
+                <label class="checkline"><input type="checkbox" checked> Antecipar troca de falante</label>
+              </div>
+              <div class="property-group">
+                <div class="property-title"><span>☑ Crop</span><span>⌃</span></div>
+                <div class="property-row"><label>Esquerda</label><input type="range" min="0" max="100" value="0"><span class="value">0px</span></div>
+                <div class="property-row"><label>Direita</label><input type="range" min="0" max="100" value="0"><span class="value">0px</span></div>
+                <div class="property-row"><label>Topo</label><input type="range" min="0" max="100" value="0"><span class="value">0px</span></div>
+                <div class="property-row"><label>Base</label><input type="range" min="0" max="100" value="0"><span class="value">0px</span></div>
+              </div>
+              <button class="primary" style="width:100%">Aplicar aos selecionados</button>
+            </aside>
+            <div class="editor-main">
+              <div class="preview-area">
+                <div class="preview-toolbar"><span>Visualização · Original 16:9</span><div><button class="secondary">Antes / depois</button> <button class="primary">Exportar</button></div></div>
+                <div class="preview-screen"><div class="safe-frame"></div><div class="detect-box"></div><div class="detect-box two"></div><div class="preview-caption">A mudança começa quando <b>você percebe isso.</b></div></div>
+                <div class="transport"><span>00:00:21:14</span><div class="transport-center"><button class="round-btn">|◀</button><button class="round-btn">▶</button><button class="round-btn">▶|</button></div><span>00:00:47:02 · 100%</span></div>
+              </div>
+              <div class="timeline-pro">
+                <div class="timeline-toolbar"><span>↶ ↷　✂　▣　T　♫</span><span>Snap ativado　＋　−</span></div>
+                <div class="tracks-pro">
+                  <div class="ruler"><span>.</span><span>00</span><span>05</span><span>10</span><span>15</span><span>20</span><span>25</span><span>30</span><span>35</span><span>40</span><span>45</span></div>
+                  <div class="track-pro"><div class="track-name">◉ VÍDEO 1</div><div class="track-lane"><div class="playhead"></div><div class="timeline-clip video" style="left:0;width:31%">Cena 01 · Pessoa 1</div><div class="timeline-clip video focus" style="left:32%;width:29%">Cena 02 · Duas pessoas</div><div class="timeline-clip video" style="left:62%;width:38%">Cena 03 · Pessoa 2</div></div></div>
+                  <div class="track-pro"><div class="track-name">♫ ÁUDIO</div><div class="track-lane"><div class="timeline-clip audio" style="left:0;width:100%">▂▃▅▆▃▂▁▃▅▇▅▃▂▃▆▇▆▃▂▁▃▅▆▅▃▂▅▇▆▅▂▁</div></div></div>
+                  <div class="track-pro"><div class="track-name">T LEGENDA</div><div class="track-lane"><div class="timeline-clip caption-track" style="left:3%;width:21%">A mudança começa</div><div class="timeline-clip caption-track" style="left:26%;width:28%">quando você percebe</div><div class="timeline-clip caption-track" style="left:56%;width:22%">isso.</div></div></div>
+                  <div class="track-pro"><div class="track-name">◆ MARCAS</div><div class="track-lane"><div class="timeline-clip" style="left:18%;width:3%;background:#db486d"></div><div class="timeline-clip" style="left:46%;width:3%;background:#dfff57"></div><div class="timeline-clip" style="left:82%;width:3%;background:#db486d"></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="motions">
+          <div class="eyebrow">Diferencial principal</div>
+          <h1>Legendas virais e motion design.</h1>
+          <p class="sub">Escolha um estilo, ajuste a animação e aplique em um corte ou em todo o projeto.</p>
+          <div class="motion-layout">
+            <aside class="motion-library">
+              <h3>Templates virais</h3>
+              <div class="template-list">
+                <button class="template-card active" data-motion="hook"><div class="template-preview" style="font-size:18px">ISSO MUDA <span style="color:var(--lime)">TUDO</span></div><b>Hook Viral</b><br><small>Pop forte + palavra em pill</small></button>
+                <button class="template-card" data-motion="shake"><div class="template-preview" style="font-size:19px;color:#ff5574">IMPACTO!</div><b>Impacto Shake</b><br><small>Tremor e escala para frases fortes</small></button>
+                <button class="template-card" data-motion="narrative"><div class="template-preview" style="font-family:Georgia,serif;text-transform:none">Uma história começa...</div><b>Narrativo</b><br><small>Serif elegante e movimento suave</small></button>
+                <button class="template-card" data-motion="typewriter"><div class="template-preview" style="font-family:monospace;text-transform:none">Você precisa saber_</div><b>Typewriter</b><br><small>Digitação letra por letra</small></button>
+                <button class="template-card" data-motion="counter"><div class="template-preview" style="font-size:24px;color:var(--lime)">50.000+</div><b>Dado & Número</b><br><small>Contador e hierarquia tipográfica</small></button>
+                <button class="template-card" data-motion="political"><div class="template-preview" style="border-left:4px solid #e9bf58;background:#182039">FALA POLÍTICA</div><b>Político</b><br><small>Barra institucional e destaque</small></button>
+                <button class="template-card" data-motion="tiktok"><div class="template-preview"><span style="color:#61e8ff">VOCÊ</span>&nbsp;<span style="color:#ff6a8f">SABIA?</span></div><b>TikTok Pop</b><br><small>Palavra por palavra em duas cores</small></button>
+              </div>
+            </aside>
+            <div class="motion-stage">
+              <div class="motion-stage-head"><span>Preview vertical 9:16 · Corte 01</span><div><button class="secondary">Zonas seguras</button> <button class="primary">Renderizar</button></div></div>
+              <div class="motion-video"><div class="motion-phone"><div class="motion-caption" id="motion-caption">A MUDANÇA COMEÇA <span class="hot">AGORA</span></div></div></div>
+              <div class="motion-timeline">
+                <div class="motion-lane"><label>PALAVRAS</label><div><span class="block words" style="left:1%;width:18%">A mudança</span><span class="block words" style="left:20%;width:18%">começa</span><span class="block words" style="left:40%;width:16%">agora</span><span class="block words" style="left:58%;width:34%">quando você decide</span></div></div>
+                <div class="motion-lane"><label>MOTION</label><div><span class="block motion" style="left:1%;width:55%">Hook Viral · Pop + Scale</span><span class="block motion" style="left:58%;width:34%">Narrativo · Slide Up</span></div></div>
+                <div class="motion-lane"><label>OVERLAYS</label><div><span class="block overlay" style="left:7%;width:19%">Pill destaque</span><span class="block overlay" style="left:64%;width:23%">Logo cliente</span></div></div>
+                <div class="motion-lane"><label>BEATS</label><div><span class="block beat" style="left:8%"></span><span class="block beat" style="left:25%"></span><span class="block beat" style="left:42%"></span><span class="block beat" style="left:59%"></span><span class="block beat" style="left:76%"></span></div></div>
+              </div>
+            </div>
+            <aside class="motion-controls">
+              <h3>Estilo e animação</h3>
+              <div class="setting"><label>REDE SOCIAL</label><select id="platform-preset"><option>TikTok · 1080×1920</option><option>Instagram Reels · 1080×1920</option><option>YouTube Shorts · 1080×1920</option><option>Facebook Reels · 1080×1920</option></select></div>
+              <div class="setting"><label>ZONA SEGURA</label><select><option>Automática pela plataforma</option><option>Conservadora</option><option>Máximo aproveitamento</option></select></div>
+              <div class="setting"><label>TEXTO</label><input value="A mudança começa agora"></div>
+              <div class="setting"><label>FONTE</label><select><option>Montserrat Black</option><option>Anton</option><option>Bebas Neue</option><option>Playfair Display</option><option>Inter</option></select></div>
+              <div class="setting"><label>ENTRADA</label><select><option>Spring Pop</option><option>Slide Up</option><option>Typewriter</option><option>Shake</option><option>Fade</option></select></div>
+              <div class="setting"><label>SAÍDA</label><select><option>Fade rápido</option><option>Scale down</option><option>Slide lateral</option><option>Sem saída</option></select></div>
+              <div class="property-row"><label>Tamanho</label><input type="range" min="30" max="120" value="72"><span class="value">72px</span></div>
+              <div class="property-row"><label>Posição</label><input type="range" min="0" max="100" value="73"><span class="value">73%</span></div>
+              <div class="property-row"><label>Velocidade</label><input type="range" min="20" max="160" value="100"><span class="value">1.0x</span></div>
+              <div class="property-group"><div class="property-title"><span>Cores</span></div><div style="display:flex;gap:8px;margin-top:10px"><input type="color" value="#ffffff"><input type="color" value="#dfff57"><input type="color" value="#0c0912"></div></div>
+              <label class="checkline"><input type="checkbox" checked> Destaque palavra atual</label>
+              <label class="checkline"><input type="checkbox"> Sincronizar com beat</label>
+              <label class="checkline"><input type="checkbox" checked> Fundo com contraste automático</label>
+              <label class="checkline"><input type="checkbox" checked> Evitar botões e descrições da rede</label>
+              <button class="primary" style="width:100%;margin-top:18px">Aplicar aos 12 cortes</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="features">
+          <div class="eyebrow">Planejamento do produto</div>
+          <h1>O que podemos adotar agora.</h1>
+          <p class="sub">Priorização baseada no motor atual, no impacto para o editor e no custo real de desenvolvimento.</p>
+          <div class="clips">
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block">AGORA</span><h3 style="margin-top:14px">Galeria de cortes</h3><p class="sub" style="margin:0">Thumbnail, score, preview, seleção e ajuste de início e fim antes da exportação.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block">AGORA</span><h3 style="margin-top:14px">Edição em massa</h3><p class="sub" style="margin:0">Aplicar layout, qualidade, formato e pessoa prioritária a todos os cortes.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block">AGORA</span><h3 style="margin-top:14px">Painel de trabalhos</h3><p class="sub" style="margin:0">Continuar processamento, abrir pasta, ver log e controlar checkpoints.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:var(--purple-2);color:white">DEPOIS</span><h3 style="margin-top:14px">Brand Kit</h3><p class="sub" style="margin:0">Logo, fontes, cores e presets diferentes para cada cliente ou projeto.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:var(--purple-2);color:white">DEPOIS</span><h3 style="margin-top:14px">Legendas automáticas</h3><p class="sub" style="margin:0">Presets, destaque de palavras, censura opcional e aplicação em lote.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:var(--purple-2);color:white">DEPOIS</span><h3 style="margin-top:14px">Entrada por link</h3><p class="sub" style="margin:0">YouTube e Google Drive com download, progresso e retomada.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:var(--orange);color:#111">AVANÇADO</span><h3 style="margin-top:14px">Editor profissional</h3><p class="sub" style="margin:0">Timeline, crop manual, split screen, legendas, logo e undo/redo.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:var(--orange);color:#111">AVANÇADO</span><h3 style="margin-top:14px">Publicação direta</h3><p class="sub" style="margin:0">Integração autenticada com YouTube, Instagram e TikTok.</p></div></article>
+            <article class="clip"><div class="project-body"><span class="score" style="position:static;display:inline-block;background:#ef5b78;color:white">FUTURO</span><h3 style="margin-top:14px">Cortes de lives</h3><p class="sub" style="margin:0">Monitoramento contínuo de transmissões e cortes quase em tempo real.</p></div></article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script>
+    const show = id => {
+      document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === id));
+      document.querySelectorAll('.nav-item[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === id));
+    };
+    document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
+    document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => show(b.dataset.go)));
+    document.querySelectorAll('.layout').forEach(b => b.addEventListener('click', () => {
+      document.querySelectorAll('.layout').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    }));
+    const motionCaption = document.getElementById('motion-caption');
+    const motionText = {
+      hook: ['A MUDANÇA COMEÇA <span class="hot">AGORA</span>', ''],
+      shake: ['ISSO MUDA TUDO!', 'shake'],
+      narrative: ['Uma história começa quando você decide mudar.', 'narrative'],
+      typewriter: ['Você precisa saber isso_', 'typewriter'],
+      counter: ['MAIS DE <span class="hot">50.000</span> PESSOAS', ''],
+      political: ['O BRASIL PRECISA OUVIR ISSO', ''],
+      tiktok: ['<span style="color:#61e8ff">VOCÊ</span> <span style="color:#ff6a8f">SABIA?</span>', '']
+    };
+    document.querySelectorAll('[data-motion]').forEach(card => card.addEventListener('click', () => {
+      document.querySelectorAll('[data-motion]').forEach(x => x.classList.remove('active'));
+      card.classList.add('active');
+      const [text, cls] = motionText[card.dataset.motion];
+      motionCaption.className = 'motion-caption ' + cls;
+      motionCaption.innerHTML = text;
+    }));
+  </script>
+</body>
+</html>
