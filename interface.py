@@ -86,58 +86,73 @@ _estado = {
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Space+Mono:wght@400;700&display=swap');
-
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 :root {
-    --bg: #080808; --surface: #111; --surface2: #181818;
-    --border: #242424; --accent: #e8ff47; --cyan: #00cec9;
-    --text: #f0f0f0; --muted: #555; --radius: 10px;
+    --bg:#000; --surface:#080808; --surface2:#0d0d0d;
+    --border:rgba(255,255,255,.12); --accent:#c63200;
+    --accent-bright:#ff4b0a; --text:#f5f5f2; --muted:#777;
 }
-
 body, .gradio-container {
-    background: var(--bg) !important;
-    color: var(--text) !important;
-    font-family: 'Syne', sans-serif !important;
+    background-color:var(--bg) !important;
+    background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px) !important;
+    background-size:84px 84px !important;
+    color:var(--text) !important; font-family:'Archivo',Arial,sans-serif !important;
 }
-.gradio-container { max-width: 960px !important; margin: 0 auto !important; padding: 32px 24px !important; }
-
-.app-header { text-align: center; margin-bottom: 40px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
-.app-header h1 { font-size: 2.8rem; font-weight: 800; color: var(--accent); letter-spacing: -2px; margin-bottom: 6px; }
-.app-header p  { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 3px; }
-
-.sec { font-family: 'Space Mono', monospace; font-size: 0.7rem; text-transform: uppercase;
-       letter-spacing: 4px; color: var(--accent); margin: 20px 0 12px;
-       padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-
-.pessoa-card { background: var(--surface); border: 2px solid var(--border); border-radius: 10px;
-               padding: 12px; text-align: center; cursor: pointer; transition: all 0.15s; }
-.pessoa-card:hover  { border-color: var(--accent); }
-.pessoa-card.ativa  { border-color: var(--accent); background: rgba(232,255,71,0.08); }
-.pessoa-card img    { width: 100%; border-radius: 6px; margin-bottom: 8px; }
-.pessoa-card span   { font-size: 12px; color: var(--text); }
-
-.btn-detectar button { background: var(--cyan) !important; color: #000 !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
-    border: none !important; border-radius: var(--radius) !important;
-    padding: 12px 24px !important; width: 100% !important; cursor: pointer !important; }
-
-.btn-analisar button { background: var(--surface2) !important; color: var(--cyan) !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
-    border: 1px solid var(--cyan) !important; border-radius: var(--radius) !important;
-    padding: 12px 24px !important; width: 100% !important; cursor: pointer !important; }
-
-.btn-processar button { background: var(--accent) !important; color: #000 !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 800 !important; font-size: 1rem !important;
-    border: none !important; border-radius: var(--radius) !important;
-    padding: 16px 32px !important; width: 100% !important; cursor: pointer !important; }
-.btn-processar button:hover { background: #fff !important; }
-
-.output-log textarea { font-family: 'Space Mono', monospace !important; font-size: 0.78rem !important;
-    background: #050505 !important; color: #88ff88 !important;
-    border: 1px solid #1a3a1a !important; min-height: 180px !important; }
-
-input[type=checkbox] { accent-color: var(--accent) !important; }
-.gr-slider input[type=range] { accent-color: var(--accent) !important; }
+.gradio-container { max-width:1180px !important; margin:0 auto !important; padding:26px 32px 64px !important; }
+.contain,.wrap,.panel,.form,.block { border-radius:0 !important; }
+.app-header { min-height:150px; display:grid; grid-template-columns:1fr auto; align-items:end;
+    gap:32px; margin-bottom:26px; padding:24px 0 30px; border-bottom:1px solid var(--border); text-align:left; }
+.app-brand { font:600 .68rem 'IBM Plex Mono',monospace; color:var(--accent-bright);
+    letter-spacing:.26em; text-transform:uppercase; }
+.app-header h1 { font-size:clamp(2.8rem,6vw,5.4rem); line-height:.84; font-weight:900;
+    color:#fff; letter-spacing:-.065em; margin:18px 0 12px; }
+.app-header h1 span { color:var(--accent); }
+.app-header p { font:500 .7rem 'IBM Plex Mono',monospace; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.18em; margin:0; }
+.app-version { border:1px solid var(--border); padding:12px 16px; color:#aaa;
+    font:500 .65rem 'IBM Plex Mono',monospace; letter-spacing:.12em; text-transform:uppercase; }
+.sec { font:500 .68rem 'IBM Plex Mono',monospace; text-transform:uppercase;
+    letter-spacing:.24em; color:var(--accent-bright); margin:28px 0 12px;
+    padding:12px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+.sec strong { color:#fff; margin-right:12px; }
+.workflow-card { background:rgba(8,8,8,.94) !important; border:1px solid var(--border) !important;
+    padding:18px !important; box-shadow:inset 3px 0 var(--accent); }
+.pessoa-card { background:var(--surface); border:1px solid var(--border); border-radius:0;
+    padding:12px; text-align:center; cursor:pointer; transition:all .15s; }
+.pessoa-card:hover,.pessoa-card.ativa { border-color:var(--accent); background:rgba(198,50,0,.14); }
+.pessoa-card img { width:100%; border-radius:0; margin-bottom:8px; }
+.btn-detectar button,.btn-analisar button,.btn-processar button {
+    font-family:'Archivo',sans-serif !important; font-weight:800 !important;
+    letter-spacing:.08em !important; text-transform:uppercase !important;
+    border-radius:0 !important; width:100% !important; cursor:pointer !important;
+}
+.btn-detectar button { background:transparent !important; color:#fff !important;
+    border:1px solid var(--accent) !important; padding:13px 24px !important; }
+.btn-analisar button { background:var(--surface2) !important; color:var(--accent-bright) !important;
+    border:1px solid var(--accent) !important; padding:13px 24px !important; }
+.btn-processar button { background:var(--accent) !important; color:#fff !important;
+    border:1px solid var(--accent) !important; padding:17px 32px !important; font-size:1rem !important; }
+.btn-detectar button:hover,.btn-analisar button:hover,.btn-processar button:hover {
+    background:var(--accent-bright) !important; color:#fff !important;
+}
+label,.label-wrap span { color:#d6d6d2 !important; font-weight:600 !important; }
+input,textarea,select,[data-testid="dropdown"] { background:#070707 !important; color:#f4f4f0 !important;
+    border-color:var(--border) !important; border-radius:0 !important; }
+.output-log textarea { font:400 .76rem 'IBM Plex Mono',monospace !important;
+    background:#030303 !important; color:#ddd !important; border:1px solid var(--border) !important;
+    min-height:170px !important; }
+.output-log { border-left:2px solid var(--accent) !important; }
+.gallery { background:#050505 !important; border-color:var(--border) !important; border-radius:0 !important; }
+.prose,.prose p,.info { color:#8b8b86 !important; }
+input[type=checkbox],.gr-slider input[type=range] { accent-color:var(--accent) !important; }
+footer { display:none !important; }
+@media(max-width:760px) {
+    .gradio-container { padding:16px !important; }
+    .app-header { grid-template-columns:1fr; min-height:auto; }
+    .app-header h1 { font-size:3.2rem; }
+    .app-version { justify-self:start; }
+}
 """
 
 # ── Funções ───────────────────────────────────────────────────────────────────
@@ -281,27 +296,30 @@ def ao_processar(
 # ── Interface ─────────────────────────────────────────────────────────────────
 
 def criar_interface():
-    with gr.Blocks(css=CSS, title="Viral Cutter v2.3.0") as app:
+    with gr.Blocks(css=CSS, title="Viral Cutter v2.3.1") as app:
 
         gr.HTML("""
         <div class="app-header">
-            <h1>VIRAL CUTTER</h1>
-            <p>Corte automático com enquadramento inteligente — v2</p>
+          <div>
+            <div class="app-brand">Vollare Intelligence · Video Studio</div>
+            <h1>VIRAL <span>CUTTER</span></h1>
+            <p>Corte automático · enquadramento inteligente · processamento local</p>
+          </div>
+          <div class="app-version">Release 2.3.1 · RTX Ready</div>
         </div>
         """)
 
         # ── 01: Upload ────────────────────────────────────────────────────
-        gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
-        arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
-
-        with gr.Row(elem_classes="btn-detectar"):
-            btn_detectar = gr.Button("🔍  DETECTAR PESSOAS", scale=1)
-
-        log_deteccao = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
+        gr.HTML('<p class="sec"><strong>01</strong> Upload do vídeo</p>')
+        with gr.Group(elem_classes="workflow-card"):
+            arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
+            with gr.Row(elem_classes="btn-detectar"):
+                btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
+            log_deteccao = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
 
         # ── 02: Preview dos rostos ────────────────────────────────────────
         with gr.Group(visible=False) as painel_rostos:
-            gr.HTML('<p class="sec">02 — Escolha Quem Priorizar</p>')
+            gr.HTML('<p class="sec"><strong>02</strong> Escolha quem priorizar</p>')
             gr.Markdown("*Selecione as pessoas que devem ser priorizadas no enquadramento. Se nenhuma for selecionada, todas são consideradas.*")
 
             galeria_rostos = gr.Gallery(
@@ -319,7 +337,7 @@ def criar_interface():
             )
 
         # ── 03: Configurações ─────────────────────────────────────────────
-        gr.HTML('<p class="sec">03 — Transcrição & Análise</p>')
+        gr.HTML('<p class="sec"><strong>03</strong> Transcrição e análise</p>')
         with gr.Row():
             idioma  = gr.Dropdown(choices=list(IDIOMAS.keys()),         value="Português",             label="Idioma")
             modelo  = gr.Dropdown(
@@ -334,7 +352,7 @@ def criar_interface():
             label="📴 Modo offline — sem API (não consome créditos, usa algoritmo local)",
             value=False
         )
-        gr.HTML('''<p style="font-family:Space Mono,monospace;font-size:10px;color:#555;margin-top:-8px;">
+        gr.HTML('''<p style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#777;margin-top:-8px;">
             Modo online usa Claude API para análise semântica precisa (recomendado).
             Modo offline usa só Whisper — gratuito, funciona sem internet.
         </p>''')
@@ -344,12 +362,12 @@ def criar_interface():
             duracao_max = gr.Slider(minimum=30, maximum=180, value=90, step=5, label="Duração máxima (s)")
 
         with gr.Row(elem_classes="btn-analisar"):
-            btn_analisar = gr.Button("🎙️  TRANSCREVER & ANALISAR", scale=1)
+            btn_analisar = gr.Button("TRANSCREVER E ANALISAR", scale=1)
 
         log_analise = gr.Textbox(label="", interactive=False, lines=6, elem_classes="output-log")
 
         # ── 04: Export ────────────────────────────────────────────────────
-        gr.HTML('<p class="sec">04 — Export</p>')
+        gr.HTML('<p class="sec"><strong>04</strong> Exportação inteligente</p>')
         with gr.Row():
             pasta_saida = gr.Textbox(
                 label="Pasta principal de export",
@@ -392,14 +410,14 @@ def criar_interface():
 
         gr.HTML('<div style="height:16px"></div>')
         with gr.Row(elem_classes="btn-processar"):
-            btn_processar = gr.Button("⚡  PROCESSAR VÍDEO", scale=1)
+            btn_processar = gr.Button("PROCESSAR VÍDEO", scale=1)
 
         # ── 05: Resultado ─────────────────────────────────────────────────
-        gr.HTML('<p class="sec" style="margin-top:28px">05 — Progresso & Resultado</p>')
+        gr.HTML('<p class="sec" style="margin-top:28px"><strong>05</strong> Progresso e resultado</p>')
         log_processo   = gr.Textbox(label="Log",      interactive=False, lines=10, elem_classes="output-log")
         relatorio_out  = gr.Textbox(label="Relatório", interactive=False, lines=10, elem_classes="output-log")
 
-        gr.HTML('<p class="sec">06 — Preview dos Clipes</p>')
+        gr.HTML('<p class="sec"><strong>06</strong> Preview dos clipes</p>')
         preview_gallery = gr.Gallery(label="", show_label=False, columns=3, height=300, object_fit="contain")
 
         # ── Eventos ───────────────────────────────────────────────────────
