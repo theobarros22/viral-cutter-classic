@@ -281,7 +281,7 @@ def ao_processar(
 # ── Interface ─────────────────────────────────────────────────────────────────
 
 def criar_interface():
-    with gr.Blocks(css=CSS, title="Viral Cutter v2.2.3") as app:
+    with gr.Blocks(css=CSS, title="Viral Cutter v2.3.0") as app:
 
         gr.HTML("""
         <div class="app-header">
