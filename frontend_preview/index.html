@@ -284,6 +284,20 @@
     .motion-caption.word-condensed span { font-family: Impact, "Arial Narrow", sans-serif; font-weight: 900; letter-spacing: .5px; }
     .motion-caption.word-editorial span { font-family: Georgia, serif; font-weight: 700; text-transform: none; font-style: italic; }
     .motion-caption.word-tech span { font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: .78em; }
+    .motion-caption.premium-stack { animation: caption-pop 1.6s infinite; font-family: Impact, "Arial Narrow", sans-serif; }
+    .motion-caption.premium-stack small { display:block; font:700 .48em Archivo,sans-serif; letter-spacing:.08em; }
+    .motion-caption.premium-stack strong { color:#ff9d00; text-shadow:0 3px 0 #6f2c00; }
+    .motion-caption.neon-glow { animation: caption-up 1.6s infinite; font-family:Archivo,sans-serif; font-style:italic; color:#16f2ff;
+      text-shadow:0 0 7px #00d4ff,0 0 20px #00a6ff; }
+    .motion-caption.grunge-type { animation:caption-shake 1.2s infinite; font-family:Impact,"Arial Narrow",sans-serif;
+      color:#ff8a00; text-shadow:3px 3px 0 #6d1700,-1px -1px 0 #ffbf00; letter-spacing:.03em; }
+    .motion-caption.organic-type { animation:caption-pop 1.8s infinite; font-family:Archivo,sans-serif; font-weight:900;
+      text-shadow:2px 3px 0 #777; transform:rotate(-1deg); }
+    .motion-caption.stop-type { animation:caption-shake .9s infinite; font-family:Impact,"Arial Narrow",sans-serif;
+      font-size:25px; letter-spacing:-.02em; color:#fff; text-shadow:4px 4px 0 #444; }
+    .motion-caption.mixed-editorial { animation:caption-up 1.8s infinite; font-family:Archivo,sans-serif; text-transform:none; }
+    .motion-caption.mixed-editorial .script { font:italic 700 .72em Georgia,serif; color:#ff9d00; }
+    .motion-caption.mixed-editorial .display { font-family:Impact,"Arial Narrow",sans-serif; text-transform:uppercase; }
     @keyframes caption-pop { 0%,22%{transform:scale(.72);opacity:0} 38%{transform:scale(1.08);opacity:1} 50%,88%{transform:scale(1)} 100%{opacity:0} }
     @keyframes caption-shake { 0%,20%{transform:scale(.7);opacity:0} 35%{transform:scale(1.12) rotate(-2deg);opacity:1} 45%{transform:rotate(2deg)} 55%{transform:rotate(-1deg)} 70%,90%{transform:scale(1)} 100%{opacity:0} }
     @keyframes caption-up { 0%,20%{transform:translateY(22px);opacity:0} 42%,88%{transform:translateY(0);opacity:1} 100%{opacity:0} }
@@ -526,6 +540,12 @@
                 <button class="template-card" data-motion="wordCondensed"><div class="template-preview" style="font-family:Impact,Arial Narrow,sans-serif;font-size:19px">NÃO IGNORE ISSO</div><b>Palavra · Condensada</b><br><small>Impacto máximo para hooks rápidos</small></button>
                 <button class="template-card" data-motion="wordEditorial"><div class="template-preview" style="font-family:Georgia,serif;text-transform:none;font-style:italic">Essa história importa</div><b>Palavra · Editorial</b><br><small>Serif elegante para narrativa e opinião</small></button>
                 <button class="template-card" data-motion="wordTech"><div class="template-preview" style="font-family:IBM Plex Mono,monospace;font-size:13px">DADOS MUDAM DECISÕES</div><b>Palavra · Mono Tech</b><br><small>Visual técnico para dados e autoridade</small></button>
+                <button class="template-card" data-motion="premiumStack"><div class="template-preview" style="font-family:Impact,Arial Narrow,sans-serif"><small style="font-family:Archivo">CARA DE</small><span style="color:#ff9d00;font-size:20px">PREMIUM</span></div><b>Premium Stack</b><br><small>Display condensada + linha auxiliar</small></button>
+                <button class="template-card" data-motion="neonGlow"><div class="template-preview" style="font-style:italic;color:#16f2ff;text-shadow:0 0 10px #00bfff">EM POUCOS SEGUNDOS</div><b>Neon Glow</b><br><small>Itálica luminosa para transições rápidas</small></button>
+                <button class="template-card" data-motion="grungeType"><div class="template-preview" style="font-family:Impact,Arial Narrow,sans-serif;color:#ff8a00;text-shadow:2px 2px #6d1700">LETREIROS</div><b>Grunge Display</b><br><small>Textura áspera e impacto editorial</small></button>
+                <button class="template-card" data-motion="organicType"><div class="template-preview" style="font-size:19px;text-shadow:2px 3px #666">ORGÂNICO</div><b>Organic Bold</b><br><small>Volume irregular e sombra sólida</small></button>
+                <button class="template-card" data-motion="stopType"><div class="template-preview" style="font-family:Impact,Arial Narrow,sans-serif;font-size:18px">STOP MOTION</div><b>Stop Motion</b><br><small>Tremor quadro a quadro e peso extremo</small></button>
+                <button class="template-card" data-motion="mixedEditorial"><div class="template-preview" style="text-transform:none"><span style="color:#ff9d00;font-style:italic">é só arrastar pra</span><br><b style="font-size:17px">TIMELINE</b></div><b>Mixed Editorial</b><br><small>Script, sans e display no mesmo bloco</small></button>
               </div>
             </aside>
             <div class="motion-stage">
@@ -610,6 +630,12 @@
       wordCondensed: ['<span>NÃO</span><span>IGNORE</span><span>ISSO</span>', 'word-by-word word-condensed'],
       wordEditorial: ['<span>Essa</span><span>história</span><span>realmente</span><span>importa</span>', 'word-by-word word-editorial'],
       wordTech: ['<span>DADOS</span><span>MUDAM</span><span>BOAS</span><span>DECISÕES</span>', 'word-by-word word-tech']
+      ,premiumStack: ['<small>QUE DEIXAM SEU VÍDEO COM</small><strong>CARA DE PREMIUM</strong>', 'premium-stack']
+      ,neonGlow: ['EM POUCOS SEGUNDOS', 'neon-glow']
+      ,grungeType: ['LETREIROS', 'grunge-type']
+      ,organicType: ['ORGÂNICO', 'organic-type']
+      ,stopType: ['STOP MOTION', 'stop-type']
+      ,mixedEditorial: ['<span class="script">é só arrastar pra</span><br><span class="display">TIMELINE</span>', 'mixed-editorial']
     };
     document.querySelectorAll('[data-motion]').forEach(card => card.addEventListener('click', () => {
       document.querySelectorAll('[data-motion]').forEach(x => x.classList.remove('active'));
