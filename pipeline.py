@@ -331,6 +331,9 @@ def etapa3_processar(
     qualidade: str = "1080p",
     perfil: str = "equilibrado",
     retomar: bool = True,
+    remover_pausas: bool = False,
+    min_silencio_ms: int = 700,
+    margem_silencio_ms: int = 120,
     progresso_callback=None
 ) -> list:
     """Corta e enquadra os clipes, salvando um checkpoint apos cada etapa."""
@@ -380,7 +383,8 @@ def etapa3_processar(
         raise OSError("Espaco livre insuficiente. Libere pelo menos 5 GB.")
 
     id_trabalho = criar_id_trabalho(
-        caminho_video, segmentos, qualidade, pessoas_priorizadas_ids, perfil
+        caminho_video, segmentos, qualidade, pessoas_priorizadas_ids, perfil,
+        remover_pausas, min_silencio_ms, margem_silencio_ms,
     )
     arquivo_checkpoint = caminho_checkpoint(pasta_saida, id_trabalho)
     arquivo_log_trabalho = os.path.join(
@@ -448,6 +452,25 @@ def etapa3_processar(
             if not cortar_clipe(caminho_video, seg["inicio"], seg["fim"], caminho_temp):
                 raise RuntimeError(f"Falha ao cortar o clipe {i}.")
             tempo_corte = time.monotonic() - inicio_corte
+
+            if remover_pausas:
+                caminho_compacto = os.path.join(pasta_saida, f"_compacto_{nome_arquivo}")
+                log(f"   [{i}/{total}] Removendo pausas internas...")
+                from cortes import remover_silencios
+                resumo_silencio = remover_silencios(
+                    caminho_temp,
+                    caminho_compacto,
+                    min_silencio_ms=min_silencio_ms,
+                    margem_ms=margem_silencio_ms,
+                )
+                if resumo_silencio["alterado"]:
+                    os.replace(caminho_compacto, caminho_temp)
+                    log(
+                        f"   [{i}/{total}] "
+                        f"{resumo_silencio['removido_ms'] / 1000:.1f}s de pausas removidos."
+                    )
+                elif os.path.exists(caminho_compacto):
+                    os.remove(caminho_compacto)
 
             checkpoint["clipes"][str(i)]["etapa"] = "deteccao_falante"
             salvar_checkpoint(arquivo_checkpoint, checkpoint)

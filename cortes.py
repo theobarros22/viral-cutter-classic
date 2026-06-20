@@ -11,6 +11,91 @@ from pydub import AudioSegment, silence
 from ffmpeg_utils import argumentos_encoder
 
 
+def calcular_intervalos_fala(
+    duracao_ms: int,
+    silencios: list,
+    margem_ms: int = 120,
+    trecho_minimo_ms: int = 120,
+) -> list:
+    """Converte silêncios em intervalos que devem permanecer no vídeo."""
+    if duracao_ms <= 0:
+        return []
+
+    cortes = []
+    for inicio, fim in sorted(silencios or []):
+        inicio = max(0, int(inicio) + margem_ms)
+        fim = min(duracao_ms, int(fim) - margem_ms)
+        if fim > inicio:
+            cortes.append((inicio, fim))
+
+    intervalos = []
+    cursor = 0
+    for inicio, fim in cortes:
+        if inicio - cursor >= trecho_minimo_ms:
+            intervalos.append((cursor, inicio))
+        cursor = max(cursor, fim)
+    if duracao_ms - cursor >= trecho_minimo_ms:
+        intervalos.append((cursor, duracao_ms))
+    return intervalos or [(0, duracao_ms)]
+
+
+def remover_silencios(
+    caminho_video: str,
+    caminho_saida: str,
+    min_silencio_ms: int = 700,
+    threshold_db: int = -40,
+    margem_ms: int = 120,
+) -> dict:
+    """Remove pausas internas e preserva uma pequena respiração entre falas."""
+    audio = AudioSegment.from_file(caminho_video)
+    duracao_ms = len(audio)
+    silencios = silence.detect_silence(
+        audio,
+        min_silence_len=max(200, int(min_silencio_ms)),
+        silence_thresh=int(threshold_db),
+    )
+    intervalos = calcular_intervalos_fala(duracao_ms, silencios, margem_ms)
+
+    if len(intervalos) == 1 and intervalos[0] == (0, duracao_ms):
+        return {"alterado": False, "removido_ms": 0, "intervalos": intervalos}
+
+    filtros = []
+    entradas_concat = []
+    for indice, (inicio, fim) in enumerate(intervalos):
+        inicio_s, fim_s = inicio / 1000, fim / 1000
+        filtros.append(
+            f"[0:v]trim=start={inicio_s:.3f}:end={fim_s:.3f},"
+            f"setpts=PTS-STARTPTS[v{indice}]"
+        )
+        filtros.append(
+            f"[0:a]atrim=start={inicio_s:.3f}:end={fim_s:.3f},"
+            f"asetpts=PTS-STARTPTS[a{indice}]"
+        )
+        entradas_concat.append(f"[v{indice}][a{indice}]")
+
+    filtros.append(
+        "".join(entradas_concat)
+        + f"concat=n={len(intervalos)}:v=1:a=1[vout][aout]"
+    )
+    cmd = ["ffmpeg", "-y", "-i", caminho_video, "-filter_complex", ";".join(filtros)]
+    cmd += ["-map", "[vout]", "-map", "[aout]"]
+    cmd += argumentos_encoder(temporario=True)
+    cmd += ["-c:a", "aac", "-pix_fmt", "yuv420p", "-movflags", "+faststart", caminho_saida]
+
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    if resultado.returncode != 0:
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+        raise RuntimeError(f"FFmpeg não conseguiu remover os silêncios: {resultado.stderr[-600:]}")
+
+    mantido_ms = sum(fim - inicio for inicio, fim in intervalos)
+    return {
+        "alterado": True,
+        "removido_ms": max(0, duracao_ms - mantido_ms),
+        "intervalos": intervalos,
+    }
+
+
 def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_db: int = -40) -> list:
     """
     Detecta os períodos de silêncio no vídeo.

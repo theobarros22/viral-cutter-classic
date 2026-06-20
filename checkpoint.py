@@ -11,7 +11,10 @@ from datetime import datetime
 VERSAO_CHECKPOINT = 1
 
 
-def criar_id_trabalho(caminho_video, segmentos, qualidade, pessoas_ids, perfil="equilibrado"):
+def criar_id_trabalho(
+    caminho_video, segmentos, qualidade, pessoas_ids, perfil="equilibrado",
+    remover_pausas=False, min_silencio_ms=700, margem_silencio_ms=120,
+):
     estatistica = os.stat(caminho_video)
     dados = {
         "video": os.path.abspath(caminho_video),
@@ -20,6 +23,9 @@ def criar_id_trabalho(caminho_video, segmentos, qualidade, pessoas_ids, perfil="
         "qualidade": qualidade,
         "perfil": perfil,
         "pessoas": sorted(pessoas_ids or []),
+        "remover_pausas": bool(remover_pausas),
+        "min_silencio_ms": int(min_silencio_ms),
+        "margem_silencio_ms": int(margem_silencio_ms),
     }
     texto = json.dumps(
         dados, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str

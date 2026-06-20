@@ -219,6 +219,9 @@ def ao_processar(
     perfil_label,
     pessoas_selecionadas,
     retomar_processamento,
+    remover_pausas,
+    min_silencio_ms,
+    margem_silencio_ms,
     progresso_callback=None
 ):
     """Processa os clipes com enquadramento inteligente."""
@@ -251,6 +254,9 @@ def ao_processar(
             qualidade=qualidade,
             perfil=perfil,
             retomar=retomar_processamento,
+            remover_pausas=remover_pausas,
+            min_silencio_ms=int(min_silencio_ms),
+            margem_silencio_ms=int(margem_silencio_ms),
             progresso_callback=cb
         )
 
@@ -369,6 +375,21 @@ def criar_interface():
             info="Ao reabrir, carregue o mesmo video, detecte as pessoas e clique em processar.",
         )
 
+        remover_pausas = gr.Checkbox(
+            label="Remover automaticamente pausas e silêncios internos",
+            value=False,
+            info="Ideal para vídeos de 3 a 4 minutos. Mantém uma pequena respiração entre as falas.",
+        )
+        with gr.Row():
+            min_silencio_ms = gr.Slider(
+                minimum=300, maximum=2000, value=700, step=100,
+                label="Pausa mínima para remover (ms)",
+            )
+            margem_silencio_ms = gr.Slider(
+                minimum=0, maximum=300, value=120, step=20,
+                label="Respiração preservada (ms)",
+            )
+
         gr.HTML('<div style="height:16px"></div>')
         with gr.Row(elem_classes="btn-processar"):
             btn_processar = gr.Button("⚡  PROCESSAR VÍDEO", scale=1)
@@ -398,7 +419,8 @@ def criar_interface():
             fn=ao_processar,
             inputs=[
                 pasta_saida, qualidade, perfil_processamento,
-                pessoas_opcoes, retomar_processamento
+                pessoas_opcoes, retomar_processamento,
+                remover_pausas, min_silencio_ms, margem_silencio_ms
             ],
             outputs=[log_processo, relatorio_out, preview_gallery],
         )

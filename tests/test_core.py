@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from checkpoint import carregar_checkpoint, resultado_valido, salvar_checkpoint
+from cortes import calcular_intervalos_fala
 from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
@@ -23,6 +24,12 @@ class TestCore(unittest.TestCase):
 
     def test_intervalos_sobrepostos_sao_fundidos(self):
         self.assertEqual(_fundir_intervalos([(10, 20), (15, 30), (40, 50)]), [(10, 30), (40, 50)])
+
+    def test_silencios_viram_intervalos_de_fala_com_respiro(self):
+        intervalos = calcular_intervalos_fala(
+            10000, [(2000, 4000), (7000, 8000)], margem_ms=100
+        )
+        self.assertEqual(intervalos, [(0, 2100), (3900, 7100), (7900, 10000)])
 
     def test_nome_vazio_tem_fallback(self):
         self.assertEqual(sanitizar_nome(""), "clipe")
