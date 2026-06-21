@@ -16,6 +16,11 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - reprodução simulada;
 - ação "Aplicar na timeline".
 - salvamento do rascunho no navegador.
+- inserts de JPEG, PNG e WEBP;
+- inserts de MP4, MOV e WEBM;
+- tempo de entrada e saída;
+- posição e escala;
+- trilha separada de inserts.
 
 ## Executar a prévia
 
@@ -33,6 +38,14 @@ Para testar:
 4. clique nos cartões para navegar;
 5. edite texto, estilo e ênfase;
 6. clique em `Salvar rascunho`.
+
+Para adicionar uma reportagem, print ou logo:
+
+1. posicione o vídeo no instante desejado;
+2. clique em `Adicionar insert`;
+3. escolha uma imagem ou vídeo;
+4. ajuste início, fim, posição e escala;
+5. confira o bloco na trilha `INSERTS`.
 
 ## Arquitetura de produção
 
