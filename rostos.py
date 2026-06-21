@@ -19,6 +19,7 @@ import json
 import tempfile
 import sys
 import logging
+from runtime import pasta_dados
 
 
 LOGGER = logging.getLogger("ViralCutter.rostos")
@@ -28,6 +29,16 @@ def _caminho_recurso(nome: str) -> str:
     """Localiza recursos tanto no código-fonte quanto no executável."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, nome)
+
+
+def _caminho_modelo_facial() -> str:
+    """Usa o modelo empacotado ou uma copia persistente gravavel."""
+    empacotado = _caminho_recurso("face_detector.tflite")
+    if os.path.isfile(empacotado):
+        return empacotado
+    pasta_modelos = os.path.join(pasta_dados(), "modelos")
+    os.makedirs(pasta_modelos, exist_ok=True)
+    return os.path.join(pasta_modelos, "face_detector.tflite")
 
 
 def _corrigir_mp4(caminho_video: str) -> str:
@@ -483,10 +494,10 @@ def _inicializar_detector():
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision as mp_vision
 
-        modelo_path = _caminho_recurso("face_detector.tflite")
+        modelo_path = _caminho_modelo_facial()
         if not os.path.exists(modelo_path):
             import urllib.request
-            print("⬇️ Baixando modelo de detecção...")
+            print("Baixando modelo de deteccao facial...")
             url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
             urllib.request.urlretrieve(url, modelo_path)
 
@@ -499,7 +510,7 @@ def _inicializar_detector():
         )
         obj = mp_vision.FaceDetector.create_from_options(options)
         mediapipe_detector = {"tipo": "novo", "obj": obj}
-        print("   ✅ Detector MediaPipe Tasks carregado.")
+        print("Detector MediaPipe Tasks carregado.")
     except Exception as erro:
         erros.append(f"MediaPipe Tasks: {erro}")
         try:
@@ -509,7 +520,7 @@ def _inicializar_detector():
                 model_selection=1, min_detection_confidence=0.35
             )
             mediapipe_detector = {"tipo": "antigo", "obj": obj}
-            print("   ✅ Detector MediaPipe full-range carregado.")
+            print("Detector MediaPipe full-range carregado.")
         except Exception as erro_antigo:
             erros.append(f"MediaPipe Solutions: {erro_antigo}")
 

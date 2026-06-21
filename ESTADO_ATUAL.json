@@ -5,8 +5,17 @@
   "classic": {
     "nome": "Viral Cutter Classic",
     "versao": "2.3.1",
-    "status": "preservado e funcional",
-    "executavel": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter\\ViralCutter.exe"
+    "status": "revisado, CUDA ativo e build validada",
+    "executavel": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter\\ViralCutter.exe",
+    "versao_anterior_preservada": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter_2.3.1_PRESERVADO\\ViralCutter.exe",
+    "melhorias_revisao": [
+      "PyTorch CUDA 12.4 ativo na RTX 3050",
+      "MediaPipe Tasks mantido como detector facial principal",
+      "modelo facial usa pasta gravavel quando nao estiver empacotado",
+      "limpeza garantida de arquivos temporarios",
+      "diagnostico detecta instalacao CPU-only em maquina NVIDIA",
+      "15 testes exclusivos do Classic e teste real de inicializacao aprovados"
+    ]
   },
   "studio": {
     "nome": "Viralume Studio",

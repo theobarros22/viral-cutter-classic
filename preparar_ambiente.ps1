@@ -83,6 +83,20 @@ Write-Host "Instalando dependencias de $arquivoDependencias..." -ForegroundColor
 & $pythonVenv -m pip install -r $arquivoDependencias
 if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar dependências Python." }
 
+$temNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
+if ($temNvidia) {
+    $torchCuda = & $pythonVenv -c "import torch; print('1' if torch.cuda.is_available() else '0')" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $torchCuda.Trim() -ne "1") {
+        Write-Host "Instalando PyTorch CUDA para a GPU NVIDIA..." -ForegroundColor Cyan
+        & $pythonVenv -m pip install --force-reinstall `
+            torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 `
+            --index-url https://download.pytorch.org/whl/cu124
+        if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao instalar PyTorch CUDA."
+        }
+    }
+}
+
 Atualizar-Path
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "Instalando FFmpeg..." -ForegroundColor Cyan

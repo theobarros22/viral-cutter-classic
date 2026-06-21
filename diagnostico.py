@@ -5,7 +5,7 @@ import importlib
 import os
 import shutil
 import sys
-from runtime import configurar_ambiente, pasta_dados
+from runtime import configurar_ambiente, pasta_dados, pasta_base
 
 
 MODULOS = ("cv2", "mediapipe", "numpy", "torch", "whisper", "gradio", "anthropic", "pydub")
@@ -37,10 +37,15 @@ def executar_diagnostico() -> bool:
             import torch
             estado = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
             avisos.append(f"Processamento Whisper disponível em: {estado}")
+            if shutil.which("nvidia-smi") and not torch.cuda.is_available():
+                problemas.append(
+                    "GPU NVIDIA detectada, mas o PyTorch instalado e CPU-only. "
+                    "Execute PREPARAR_AMBIENTE.bat para instalar a versao CUDA."
+                )
         except Exception:
             pass
 
-    if not os.path.exists("face_detector.tflite"):
+    if not os.path.exists(os.path.join(pasta_base(), "face_detector.tflite")):
         avisos.append("Modelo facial ausente; será baixado na primeira execução.")
 
     try:

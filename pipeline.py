@@ -433,6 +433,7 @@ def etapa3_processar(
 
         nome_arquivo = f"{i:02d}_{sanitizar_nome(seg.get('titulo', f'clipe_{i:02d}'))}.mp4"
         caminho_temp = os.path.join(pasta_saida, f"_temp_{nome_arquivo}")
+        caminho_compacto = None
         caminho_final = os.path.join(pasta_saida, nome_arquivo)
         log(f"   [{i}/{total}] {seg.get('titulo', 'Clipe')}")
 
@@ -560,6 +561,8 @@ def etapa3_processar(
         finally:
             if os.path.exists(caminho_temp):
                 os.remove(caminho_temp)
+            if caminho_compacto and os.path.exists(caminho_compacto):
+                os.remove(caminho_compacto)
 
     resultados = [
         resultados_por_indice[indice] for indice in sorted(resultados_por_indice)
