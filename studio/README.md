@@ -40,6 +40,8 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - preset Grunge Collage com recortes e papel;
 - estética xerox/jornal, preto, creme e laranja;
 - tipografia condensada e composição assimétrica.
+- estilos tipográficos por personalidade: Squeeze, Bubble, Poster, Elegant,
+  Classic e Strong.
 
 ## Executar a prévia
 
