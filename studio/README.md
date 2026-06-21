@@ -34,6 +34,9 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - preset Editorial Poster com tipografia em camadas;
 - preview de texto atrás e à frente do sujeito;
 - composição com eyebrow, headline, caixa auxiliar e elementos gráficos.
+- preset Social Campaign com headline em blocos;
+- pergunta circulada, copy explicativa e CTA inferior;
+- espaço para marca e informações de campanha.
 
 ## Executar a prévia
 
