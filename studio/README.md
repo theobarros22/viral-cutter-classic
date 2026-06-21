@@ -46,6 +46,17 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - miniatura "sem edição", card tipográfico e legenda híbrida;
 - preparado para flashes, inserts cinematográficos e SFX de transição.
 - estilo Warped Bold com tipografia pesada, curvada e perspectiva fisheye.
+- template B-Roll Story com vídeo principal, miniatura e cards de apoio;
+- template Before/After Split para comparação lado a lado;
+- presets SFX: Whoosh, Pop, Impact/Boom, Riser e Click UI.
+
+### Sons observados nas referências
+
+- Whoosh curto em entradas e trocas de B-roll.
+- Pop em palavras e ícones.
+- Impact/Boom em cards de tela cheia.
+- Riser antes de uma revelação ou mudança de cena.
+- Click UI em inserts de aplicativos e interfaces.
 
 ## Executar a prévia
 
