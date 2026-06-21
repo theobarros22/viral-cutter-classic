@@ -31,6 +31,9 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - filtro FFmpeg para barra de progresso;
 - suporte técnico a LUT `.cube`;
 - construção de mixagem SFX com atraso em milissegundos.
+- preset Editorial Poster com tipografia em camadas;
+- preview de texto atrás e à frente do sujeito;
+- composição com eyebrow, headline, caixa auxiliar e elementos gráficos.
 
 ## Executar a prévia
 
@@ -113,3 +116,16 @@ Próxima integração:
 2. selecionar arquivos SFX reais licenciados;
 3. executar o passe final FFmpeg;
 4. combinar com a renderização Remotion das legendas.
+
+## Editorial Poster
+
+O protótipo possui uma máscara visual simulada para validar a composição.
+Na produção, o texto realmente atrás da pessoa exigirá:
+
+1. segmentação do sujeito com máscara por frame;
+2. camada de texto de fundo;
+3. vídeo original ou sujeito recortado no meio;
+4. texto frontal e elementos gráficos;
+5. composição final no Remotion ou FFmpeg.
+
+O recurso deve ter fallback sem recorte quando a segmentação não for confiável.
