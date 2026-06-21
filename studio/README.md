@@ -21,6 +21,8 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - tempo de entrada e saída;
 - posição e escala;
 - trilha separada de inserts.
+- importação de arquivos SRT;
+- exportação dos cartões editados para SRT.
 
 ## Executar a prévia
 
@@ -46,6 +48,15 @@ Para adicionar uma reportagem, print ou logo:
 3. escolha uma imagem ou vídeo;
 4. ajuste início, fim, posição e escala;
 5. confira o bloco na trilha `INSERTS`.
+
+## SRT
+
+- `Importar SRT`: transforma cada bloco em um cartão editável.
+- Linhas múltiplas são unificadas no mesmo cartão.
+- Tags simples de formatação são removidas na importação.
+- `Exportar SRT`: baixa os textos e tempos atuais em formato universal.
+- Estilos e motions continuam no projeto Viralume, pois o SRT armazena
+  principalmente texto e sincronização.
 
 ## Arquitetura de produção
 
