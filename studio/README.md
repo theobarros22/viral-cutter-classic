@@ -23,6 +23,9 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - trilha separada de inserts.
 - importação de arquivos SRT;
 - exportação dos cartões editados para SRT.
+- Viralume Quick com marcação de entrada e saída;
+- corte rápido sem recodificação;
+- atalhos de teclado para reprodução e marcação.
 
 ## Executar a prévia
 
@@ -76,3 +79,13 @@ O Classic permanece em:
 O Viralume será construído futuramente em:
 
 `D:\CORTE VIRAL\studio\dist\Viralume\Viralume.exe`
+
+## Viralume Quick
+
+- Espaço: reproduzir ou pausar.
+- `I`: marcar entrada.
+- `O`: marcar saída.
+- Setas esquerda/direita: navegar um segundo.
+- Exportação atual usa `FFmpeg -c copy`.
+- Cortes lossless respeitam keyframes e podem incluir alguns frames extras.
+- A próxima opção será `Corte preciso`, com recodificação somente do necessário.

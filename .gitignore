@@ -13,4 +13,5 @@ backups/
 frontend_preview/.server_pid
 studio/server.log
 studio/server-error.log
+studio/exports/
 *.zip
