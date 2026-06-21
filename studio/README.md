@@ -45,6 +45,7 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - preset Edit Showcase com comparativo antes/depois;
 - miniatura "sem edição", card tipográfico e legenda híbrida;
 - preparado para flashes, inserts cinematográficos e SFX de transição.
+- estilo Warped Bold com tipografia pesada, curvada e perspectiva fisheye.
 
 ## Executar a prévia
 
