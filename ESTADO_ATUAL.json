@@ -1,25 +1,30 @@
 {
-  "projeto": "Vollare Viral Cutter",
-  "versao_executavel": "2.2.3",
-  "data_snapshot": "2026-06-20",
+  "projeto": "Viralume",
+  "data_snapshot": "2026-06-21",
   "workspace": "C:\\Users\\Theo Barros\\Claude\\Projects\\CORTE VIRAL",
-  "fonte_principal": "D:\\CORTE VIRAL\\files",
-  "executavel": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter\\ViralCutter.exe",
-  "frontend_preview": "frontend_preview\\index.html",
-  "frontend_url_local": "http://127.0.0.1:8765",
-  "formato_editor": "vertical 9:16",
-  "redes": [
-    "TikTok",
-    "Instagram Reels",
-    "YouTube Shorts",
-    "Facebook Reels"
+  "classic": {
+    "nome": "Viral Cutter Classic",
+    "versao": "2.3.1",
+    "status": "preservado e funcional",
+    "executavel": "D:\\CORTE VIRAL\\files\\dist\\ViralCutter\\ViralCutter.exe"
+  },
+  "studio": {
+    "nome": "Viralume Studio",
+    "status": "prototipo funcional em desenvolvimento",
+    "fonte": "D:\\CORTE VIRAL\\studio",
+    "url_local": "http://127.0.0.1:8766",
+    "servidor": "studio\\server.py"
+  },
+  "implementado_studio": [
+    "player de video real",
+    "cartoes sincronizados",
+    "importacao e exportacao SRT",
+    "inserts de imagem e video",
+    "Viralume Quick com corte lossless",
+    "presets tipograficos e editoriais",
+    "motor base de zoom, SFX, LUT e progress bar",
+    "17 testes automatizados"
   ],
-  "foco": [
-    "cortes virais",
-    "legendas virais",
-    "motion graphics",
-    "processamento local",
-    "retomada por checkpoint"
-  ],
-  "proxima_entrega": "frontend React + pywebview + Remotion"
+  "lacuna_atual": "conectar o projeto estruturado do navegador ao backend e ao render final",
+  "proxima_entrega": "API de projeto + transcricao Whisper em cartoes + fila de render FFmpeg/Remotion"
 }

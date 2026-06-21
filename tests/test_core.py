@@ -14,9 +14,22 @@ from rostos import _limpar_deteccoes, detectar_pessoas_no_video
 from studio.viral_effects import (
     expressao_zoom, filtro_barra_progresso, filtro_lut, filtros_sfx,
 )
+from studio.project import validar_projeto
 
 
 class TestCore(unittest.TestCase):
+    def test_projeto_descarta_legenda_invalida(self):
+        projeto = validar_projeto({
+            "name": "Teste",
+            "captions": [
+                {"start": 0, "end": 1.5, "text": "Legenda valida"},
+                {"start": 2, "end": 1, "text": "Fim invalido"},
+                {"start": 2, "end": 3, "text": ""},
+            ],
+        })
+        self.assertEqual(len(projeto["captions"]), 1)
+        self.assertEqual(projeto["captions"][0]["text"], "Legenda valida")
+
     def test_segmentos_invalidos_sao_descartados(self):
         segmentos = [
             {"inicio": 10, "fim": 20},

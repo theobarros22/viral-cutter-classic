@@ -9,10 +9,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from project import salvar_projeto
+
 
 PORTA = 8766
 PASTA_STUDIO = Path(__file__).resolve().parent
 PASTA_EXPORT = Path(r"D:\CORTE VIRAL\studio\exports")
+PASTA_PROJETOS = Path(r"D:\CORTE VIRAL\studio\projects")
 
 
 class ViralumeHandler(SimpleHTTPRequestHandler):
@@ -20,7 +23,11 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(PASTA_STUDIO), **kwargs)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/quick-cut":
+        rota = urlparse(self.path).path
+        if rota == "/api/project":
+            self._salvar_projeto()
+            return
+        if rota != "/api/quick-cut":
             self.send_error(404)
             return
 
@@ -74,6 +81,24 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
             caminho = locals().get("caminho_entrada")
             if caminho and os.path.exists(caminho):
                 os.remove(caminho)
+
+    def _salvar_projeto(self):
+        try:
+            tamanho = int(self.headers.get("Content-Length", "0"))
+            if tamanho <= 0 or tamanho > 10 * 1024 * 1024:
+                raise ValueError("Tamanho de projeto invalido.")
+            dados = json.loads(self.rfile.read(tamanho).decode("utf-8"))
+            arquivo, projeto = salvar_projeto(dados, PASTA_PROJETOS)
+            self._json({
+                "ok": True,
+                "arquivo": str(arquivo),
+                "legendas": len(projeto["captions"]),
+                "insercoes": len(projeto["inserts"]),
+            })
+        except (ValueError, json.JSONDecodeError) as erro:
+            self._json({"ok": False, "erro": str(erro)}, status=400)
+        except Exception as erro:
+            self._json({"ok": False, "erro": f"Falha ao salvar: {erro}"}, status=500)
 
     def _json(self, dados, status=200):
         corpo = json.dumps(dados, ensure_ascii=False).encode("utf-8")

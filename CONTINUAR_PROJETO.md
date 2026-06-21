@@ -137,3 +137,12 @@ O script:
 > `C:\Users\Theo Barros\Claude\Projects\CORTE VIRAL\CONTINUAR_PROJETO.md`.
 > A fonte final fica em `D:\CORTE VIRAL\files`. Revise o estado atual antes de
 > editar e preserve builds, ambiente e backups.
+## Atualizacao 2026-06-21 - Viralume Studio
+
+- O Viral Cutter Classic 2.3.1 continua preservado e independente.
+- O Studio esta em `D:\CORTE VIRAL\studio` e abre em `http://127.0.0.1:8766/`.
+- O editor ja possui legendas, SRT, inserts, templates e direcao de efeitos.
+- Projetos estruturados agora sao salvos em
+  `D:\CORTE VIRAL\studio\projects\*.viralume.json`.
+- Proxima etapa tecnica: transcricao Whisper com timestamps por palavra e fila
+  de renderizacao final FFmpeg/Remotion usando esse arquivo de projeto.

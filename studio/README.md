@@ -152,3 +152,12 @@ Na produção, o texto realmente atrás da pessoa exigirá:
 5. composição final no Remotion ou FFmpeg.
 
 O recurso deve ter fallback sem recorte quando a segmentação não for confiável.
+# Persistencia de projetos
+
+O botao **Salvar rascunho** envia legendas, inserts, configuracoes de efeitos e
+metadados do video para `POST /api/project`. O servidor valida o contrato e
+grava atomicamente um arquivo:
+
+`D:\CORTE VIRAL\studio\projects\<nome>.viralume.json`
+
+O navegador ainda mantem uma copia em `localStorage` para recuperacao rapida.
