@@ -26,6 +26,11 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - Viralume Quick com marcação de entrada e saída;
 - corte rápido sem recodificação;
 - atalhos de teclado para reprodução e marcação.
+- painel de Direção Viral Automática;
+- eventos de zoom e SFX baseados nos cartões com ênfase;
+- filtro FFmpeg para barra de progresso;
+- suporte técnico a LUT `.cube`;
+- construção de mixagem SFX com atraso em milissegundos.
 
 ## Executar a prévia
 
@@ -89,3 +94,22 @@ O Viralume será construído futuramente em:
 - Exportação atual usa `FFmpeg -c copy`.
 - Cortes lossless respeitam keyframes e podem incluir alguns frames extras.
 - A próxima opção será `Corte preciso`, com recodificação somente do necessário.
+
+## Direção Viral
+
+Estado atual:
+
+- Auto-reenquadramento: já existe no motor Python do Classic.
+- Inserts: disponíveis no Caption Studio.
+- Zoom dinâmico: filtro FFmpeg e eventos implementados.
+- SFX automático: construção de filtros `adelay` e `amix` implementada.
+- Barra de progresso: filtro FFmpeg implementado.
+- LUT em lote: validação e filtro `lut3d` implementados.
+- Hook Master: controle e evento inicial disponíveis no protótipo.
+
+Próxima integração:
+
+1. enviar os eventos do navegador ao servidor local;
+2. selecionar arquivos SFX reais licenciados;
+3. executar o passe final FFmpeg;
+4. combinar com a renderização Remotion das legendas.

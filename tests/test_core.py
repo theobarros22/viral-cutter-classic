@@ -11,6 +11,9 @@ from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
 from rostos import _limpar_deteccoes, detectar_pessoas_no_video
+from studio.viral_effects import (
+    expressao_zoom, filtro_barra_progresso, filtro_lut, filtros_sfx,
+)
 
 
 class TestCore(unittest.TestCase):
@@ -30,6 +33,27 @@ class TestCore(unittest.TestCase):
             10000, [(2000, 4000), (7000, 8000)], margem_ms=100
         )
         self.assertEqual(intervalos, [(0, 2100), (3900, 7100), (7900, 10000)])
+
+    def test_zoom_dinamico_limita_intensidade(self):
+        expressao = expressao_zoom([1.0, 3.5], intensidade=1.8)
+        self.assertIn("1.300", expressao)
+        self.assertIn("between(t,1.000,1.450)", expressao)
+
+    def test_barra_progresso_usa_duracao(self):
+        filtro = filtro_barra_progresso(10, altura=8)
+        self.assertIn("t/10.000", filtro)
+        self.assertIn("h=8", filtro)
+
+    def test_lut_exige_cube(self):
+        with self.assertRaises(ValueError):
+            filtro_lut("visual.png")
+        self.assertIn("lut3d", filtro_lut(r"D:\luts\cinema.cube"))
+
+    def test_sfx_sao_atrasados_e_mixados(self):
+        filtros, saida = filtros_sfx([{"tempo": 1.25, "volume": 0.8}])
+        self.assertIn("adelay=1250|1250", filtros[0])
+        self.assertIn("amix=inputs=2", filtros[-1])
+        self.assertEqual(saida, "[aout]")
 
     def test_nome_vazio_tem_fallback(self):
         self.assertEqual(sanitizar_nome(""), "clipe")
