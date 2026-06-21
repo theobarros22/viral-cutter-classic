@@ -7,9 +7,24 @@ from studio.viral_effects import (
     filtro_lut,
     filtros_sfx,
 )
+from studio.smart_layouts import filtro_regiao, plano_layout, validar_layout
 
 
 class TestStudio(unittest.TestCase):
+    def test_layout_desconhecido_volta_para_solo(self):
+        self.assertEqual(validar_layout("inexistente"), "solo")
+
+    def test_layout_vertical_gera_regioes_em_1080x1920(self):
+        plano = plano_layout("duo-horizontal")
+        self.assertEqual(plano["format"], "9:16")
+        self.assertEqual(plano["regions"][1]["y"], 960)
+        self.assertEqual(plano["regions"][1]["height"], 960)
+
+    def test_filtro_regiao_preenche_sem_distorcer(self):
+        filtro = filtro_regiao(1, {"width": 540, "height": 1920}, "cam1")
+        self.assertIn("force_original_aspect_ratio=increase", filtro)
+        self.assertIn("crop=540:1920", filtro)
+
     def test_projeto_descarta_legenda_invalida(self):
         projeto = validar_projeto({
             "name": "Teste",

@@ -140,6 +140,15 @@ Próxima integração:
 3. executar o passe final FFmpeg;
 4. combinar com a renderização Remotion das legendas.
 
+## Smart Layouts verticais
+
+- exclusivos para saída `1080x1920` em formato `9:16`;
+- 11 presets para uma a quatro fontes;
+- cada preset gera regiões exatas de posição e tamanho;
+- a escolha aparece como evento na timeline;
+- o plano técnico é salvo em `effects.smart_layout_plan`;
+- filtros individuais de escala e crop já podem ser consumidos pelo renderizador.
+
 ## Editorial Poster
 
 O protótipo possui uma máscara visual simulada para validar a composição.

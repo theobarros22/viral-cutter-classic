@@ -4,6 +4,10 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+try:
+    from studio.smart_layouts import plano_layout, validar_layout
+except ModuleNotFoundError:
+    from smart_layouts import plano_layout, validar_layout
 
 
 VERSAO_PROJETO = 1
@@ -60,6 +64,14 @@ def validar_projeto(dados):
             }
         )
 
+    efeitos = dados.get("effects") if isinstance(dados.get("effects"), dict) else {}
+    layout_ativo = efeitos.get("smart_layout_enabled") is not False
+    layout_nome = validar_layout(efeitos.get("smart_layout"))
+    efeitos["smart_layout"] = layout_nome
+    efeitos["smart_layout_enabled"] = layout_ativo
+    efeitos["smart_layout_format"] = "9:16"
+    efeitos["smart_layout_plan"] = plano_layout(layout_nome) if layout_ativo else None
+
     return {
         "version": VERSAO_PROJETO,
         "name": str(dados.get("name") or "Projeto Viralume").strip()[:120],
@@ -67,7 +79,7 @@ def validar_projeto(dados):
         "video": dados.get("video") if isinstance(dados.get("video"), dict) else {},
         "captions": legendas,
         "inserts": insercoes,
-        "effects": dados.get("effects") if isinstance(dados.get("effects"), dict) else {},
+        "effects": efeitos,
     }
 
 
