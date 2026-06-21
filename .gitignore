@@ -11,4 +11,6 @@ tools/ffmpeg.exe
 tools/ffprobe.exe
 backups/
 frontend_preview/.server_pid
+studio/server.log
+studio/server-error.log
 *.zip

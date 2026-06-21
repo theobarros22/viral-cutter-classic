@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "format": "vertical-9x16",
+  "captions": [
+    {
+      "id": "caption-001",
+      "start": 0.0,
+      "end": 1.15,
+      "text": "EU POSSO",
+      "words": [
+        {"text": "EU", "start": 0.0, "end": 0.42},
+        {"text": "POSSO", "start": 0.42, "end": 1.15}
+      ],
+      "style": "solid",
+      "effect": "pop",
+      "highlight": true
+    }
+  ]
+}
