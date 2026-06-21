@@ -1,10 +1,12 @@
-# Viral Cutter Studio
+# Viralume Studio
 
 Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 
 ## Protótipo atual
 
 - player vertical;
+- upload de vídeo real no navegador;
+- reprodução e velocidade;
 - cartões sincronizados;
 - edição de texto sem recarregar;
 - estilo individual;
@@ -13,6 +15,7 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - timeline gerada;
 - reprodução simulada;
 - ação "Aplicar na timeline".
+- salvamento do rascunho no navegador.
 
 ## Executar a prévia
 
@@ -21,6 +24,15 @@ python -m http.server 8766 --bind 127.0.0.1 --directory studio
 ```
 
 Acesse `http://127.0.0.1:8766`.
+
+Para testar:
+
+1. clique em `Carregar vídeo`;
+2. selecione um MP4;
+3. pressione `Reproduzir`;
+4. clique nos cartões para navegar;
+5. edite texto, estilo e ênfase;
+6. clique em `Salvar rascunho`.
 
 ## Arquitetura de produção
 
@@ -37,6 +49,6 @@ O Classic permanece em:
 
 `D:\CORTE VIRAL\files\dist\ViralCutter\ViralCutter.exe`
 
-O Studio será construído futuramente em:
+O Viralume será construído futuramente em:
 
-`D:\CORTE VIRAL\studio\dist\ViralCutterStudio\ViralCutterStudio.exe`
+`D:\CORTE VIRAL\studio\dist\Viralume\Viralume.exe`

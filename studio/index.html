@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Viral Cutter Studio - Card Captions</title>
+  <title>Viralume Studio</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
     :root{--bg:#000;--panel:#090909;--panel2:#111;--line:#292929;--orange:#c63200;--hot:#ff4b0a;--text:#f5f5f2;--muted:#777}
@@ -18,6 +18,7 @@
     .content{padding:22px;display:grid;grid-template-columns:minmax(420px,1fr) 410px;gap:18px}.panel{background:#080808;border:1px solid var(--line)}
     .panel-head{height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 14px}
     .player-wrap{padding:18px;display:grid;place-items:center}.phone{height:470px;aspect-ratio:9/16;background:linear-gradient(#242424,#070707);position:relative;overflow:hidden;border:1px solid #333}
+    .phone video{width:100%;height:100%;object-fit:cover;background:#050505}.empty-video{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:30px;color:#888;background:#0a0a0a;z-index:1}
     .subject{position:absolute;width:42%;height:54%;left:29%;top:17%;border-radius:48% 48% 10% 10%;background:linear-gradient(140deg,#7d553d,#161616)}
     .caption{position:absolute;left:8%;right:8%;bottom:20%;text-align:center;font-weight:900;font-size:27px;line-height:1.02;text-transform:uppercase;text-shadow:0 4px 12px #000}
     .caption .active-word{color:var(--hot);transform:scale(1.14);display:inline-block}.transport{border-top:1px solid var(--line);padding:12px 16px}
@@ -29,22 +30,25 @@
     .card-body input{width:100%;background:#050505;border:1px solid #303030;color:#fff;padding:8px}.card-row{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:7px}
     select{min-width:0;background:#080808;color:#bbb;border:1px solid #303030;padding:7px;font-size:11px}.toggle{border:1px solid #333;background:#111;color:#aaa;padding:6px 9px}.toggle.on{border-color:var(--orange);color:#fff}
     .timeline{grid-column:1/-1;padding:14px}.lane{height:42px;position:relative;background:#0d0d0d;border:1px solid var(--line);margin-top:7px}.block{position:absolute;top:5px;bottom:5px;background:#632108;border:1px solid #b44418;padding:6px;font-size:9px;overflow:hidden}
-    .summary{display:flex;gap:18px}.summary b{color:#fff}@media(max-width:980px){.app{grid-template-columns:1fr}aside{display:none}.content{grid-template-columns:1fr}.cards{max-height:600px}}
+    .summary{display:flex;gap:18px}.summary b{color:#fff}.file-input{display:none}.file-label{display:inline-block}.project-name{background:#080808;border:1px solid #333;color:#fff;padding:9px;width:210px}
+    .notice{grid-column:1/-1;border:1px solid #45200f;background:#160b06;color:#d8a68c;padding:11px 14px;font:500 11px "IBM Plex Mono",monospace}
+    @media(max-width:980px){.app{grid-template-columns:1fr}aside{display:none}.content{grid-template-columns:1fr}.cards{max-height:600px}}
   </style>
 </head>
 <body>
 <div class="app">
   <aside>
-    <div class="brand">VIRAL <b>CUTTER</b></div><div class="mono">Studio · Card Captions</div>
-    <nav><button class="nav">Projetos</button><button class="nav">Cortes com IA</button><button class="nav active">Legendas por cartões</button><button class="nav">Editor</button><button class="nav">Biblioteca criativa</button></nav>
+    <div class="brand">VIRA<b>LUME</b></div><div class="mono">Studio · Dynamic Captions</div>
+    <nav><button class="nav">Viralume Quick</button><button class="nav">Projetos</button><button class="nav">Cortes com IA</button><button class="nav active">Caption Studio</button><button class="nav">Motion</button><button class="nav">Biblioteca criativa</button></nav>
     <div class="gpu mono">● RTX 3050 disponível</div>
   </aside>
   <main>
-    <header><div><b>Legendas dinâmicas inteligentes</b><div class="mono">Edição estruturada em lote</div></div><div><button class="secondary">Salvar rascunho</button> <button class="primary" id="apply">Aplicar na timeline</button></div></header>
+    <header><div><b>Viralume Caption Studio</b><div class="mono">Edição estruturada em lote</div></div><div><input class="project-name" id="projectName" value="Novo projeto"> <button class="secondary" id="save">Salvar rascunho</button> <button class="primary" id="apply">Aplicar na timeline</button></div></header>
     <div class="content">
+      <div class="notice">TESTE REAL: carregue um MP4 local. Os cartões acompanham o tempo do vídeo; a transcrição automática será conectada ao Whisper na próxima etapa.</div>
       <section class="panel">
-        <div class="panel-head"><div><b>Preview vertical 9:16</b><div class="mono">Sincronizado com os cartões</div></div><button class="secondary">Zonas seguras</button></div>
-        <div class="player-wrap"><div class="phone"><div class="subject"></div><div class="caption" id="caption"></div></div></div>
+        <div class="panel-head"><div><b>Preview vertical 9:16</b><div class="mono" id="videoName">Nenhum vídeo carregado</div></div><div><label class="secondary file-label" for="videoFile">Carregar vídeo</label><input class="file-input" id="videoFile" type="file" accept="video/*"> <button class="secondary">Zonas seguras</button></div></div>
+        <div class="player-wrap"><div class="phone"><div class="empty-video" id="emptyVideo"><div><b>CARREGUE UM VÍDEO REAL</b><br><span class="mono">MP4, MOV ou WEBM</span></div></div><video id="video" playsinline></video><div class="caption" id="caption"></div></div></div>
         <div class="transport"><div class="progress"><span id="progress"></span></div><div class="controls"><button class="primary" id="play">Reproduzir</button><span class="mono" id="clock">00:00.00 / 00:08.40</span><label class="mono">Velocidade <select id="speed"><option value="1">1.0x</option><option value=".75">0.75x</option><option value=".5">0.5x</option></select></label></div></div>
       </section>
       <section class="panel"><div class="panel-head"><div><b>Cartões de fala</b><div class="mono">1 a 3 palavras por bloco</div></div><div class="summary mono"><span><b id="count">0</b> cartões</span></div></div><div class="cards" id="cards"></div></section>
@@ -53,7 +57,7 @@
   </main>
 </div>
 <script>
-const captions=[
+let captions=[
  {start:0,end:1.15,text:"EU POSSO",style:"solid",effect:"pop",highlight:true},
  {start:1.15,end:2.2,text:"TE GARANTIR",style:"condensed",effect:"shake",highlight:true},
  {start:2.2,end:3.15,text:"QUE ESSA",style:"standard",effect:"slide",highlight:false},
@@ -64,16 +68,22 @@ const captions=[
  {start:7.45,end:8.4,text:"NA TIMELINE",style:"editorial",effect:"slide",highlight:true}
 ];
 const styles={standard:"Padrão",solid:"Sólida",condensed:"Condensada",premium:"Premium Stack",grunge:"Grunge",neon:"Neon Glow",editorial:"Editorial"};
-let current=0,playing=false,last=0,total=8.4;
-const cards=document.querySelector("#cards"),caption=document.querySelector("#caption"),clock=document.querySelector("#clock"),progress=document.querySelector("#progress");
-function renderCards(){cards.innerHTML="";captions.forEach((c,i)=>{const el=document.createElement("article");el.className="caption-card";el.dataset.i=i;el.innerHTML=`<div class="time">${fmt(c.start)}<br>${fmt(c.end)}</div><div class="card-body"><input value="${c.text}"><div class="card-row"><select>${Object.entries(styles).map(([v,n])=>`<option value="${v}" ${v===c.style?"selected":""}>${n}</option>`).join("")}</select><select><option>Pop</option><option ${c.effect==="shake"?"selected":""}>Shake</option><option ${c.effect==="slide"?"selected":""}>Slide</option><option ${c.effect==="glow"?"selected":""}>Glow</option></select><button class="toggle ${c.highlight?"on":""}">Ênfase</button></div></div>`;el.onclick=e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT"||e.target.tagName==="BUTTON")return;current=c.start;update()};el.querySelector("input").oninput=e=>{c.text=e.target.value;update()};el.querySelector("select").onchange=e=>{c.style=e.target.value;update()};el.querySelector(".toggle").onclick=e=>{c.highlight=!c.highlight;e.target.classList.toggle("on",c.highlight);update()};cards.appendChild(el)});document.querySelector("#count").textContent=captions.length}
+let current=0,total=8.4;
+const cards=document.querySelector("#cards"),caption=document.querySelector("#caption"),clock=document.querySelector("#clock"),progress=document.querySelector("#progress"),video=document.querySelector("#video");
+function renderCards(){cards.innerHTML="";captions.forEach((c,i)=>{const el=document.createElement("article");el.className="caption-card";el.dataset.i=i;el.innerHTML=`<div class="time">${fmt(c.start)}<br>${fmt(c.end)}</div><div class="card-body"><input value="${c.text}"><div class="card-row"><select>${Object.entries(styles).map(([v,n])=>`<option value="${v}" ${v===c.style?"selected":""}>${n}</option>`).join("")}</select><select><option>Pop</option><option ${c.effect==="shake"?"selected":""}>Shake</option><option ${c.effect==="slide"?"selected":""}>Slide</option><option ${c.effect==="glow"?"selected":""}>Glow</option></select><button class="toggle ${c.highlight?"on":""}">Ênfase</button></div></div>`;el.onclick=e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT"||e.target.tagName==="BUTTON")return;current=c.start;if(video.src)video.currentTime=current;update()};el.querySelector("input").oninput=e=>{c.text=e.target.value;update()};el.querySelector("select").onchange=e=>{c.style=e.target.value;update()};el.querySelector(".toggle").onclick=e=>{c.highlight=!c.highlight;e.target.classList.toggle("on",c.highlight);update()};cards.appendChild(el)});document.querySelector("#count").textContent=captions.length}
 function activeIndex(){return Math.max(0,captions.findIndex(c=>current>=c.start&&current<c.end))}
-function update(){const i=activeIndex(),c=captions[i];document.querySelectorAll(".caption-card").forEach((x,n)=>x.classList.toggle("active",n===i));let words=c.text.split(" ");caption.innerHTML=words.map((w,n)=>`<span class="${c.highlight&&n===words.length-1?"active-word":""}">${w}</span>`).join(" ");caption.style.fontFamily=c.style==="condensed"||c.style==="premium"||c.style==="grunge"?'Impact,Arial Narrow,sans-serif':c.style==="editorial"?'Georgia,serif':'Archivo,sans-serif';caption.style.color=c.style==="neon"?"#16f2ff":"#fff";caption.style.textShadow=c.style==="neon"?"0 0 9px #00c8ff,0 0 22px #008cff":"0 4px 12px #000";progress.style.width=`${current/total*100}%`;clock.textContent=`${fmt(current)} / ${fmt(total)}`}
+function update(){if(!captions.length)return;const i=activeIndex(),c=captions[i];document.querySelectorAll(".caption-card").forEach((x,n)=>x.classList.toggle("active",n===i));let words=c.text.split(" ");caption.innerHTML=words.map((w,n)=>`<span class="${c.highlight&&n===words.length-1?"active-word":""}">${w}</span>`).join(" ");caption.style.fontFamily=c.style==="condensed"||c.style==="premium"||c.style==="grunge"?'Impact,Arial Narrow,sans-serif':c.style==="editorial"?'Georgia,serif':'Archivo,sans-serif';caption.style.color=c.style==="neon"?"#16f2ff":"#fff";caption.style.textShadow=c.style==="neon"?"0 0 9px #00c8ff,0 0 22px #008cff":"0 4px 12px #000";progress.style.width=`${Math.min(100,current/total*100)}%`;clock.textContent=`${fmt(current)} / ${fmt(total)}`}
 function fmt(v){let m=Math.floor(v/60),s=(v%60).toFixed(2).padStart(5,"0");return `${String(m).padStart(2,"0")}:${s}`}
-function tick(t){if(!playing)return;if(!last)last=t;current+=(t-last)/1000*Number(document.querySelector("#speed").value);last=t;if(current>=total){current=0;playing=false;document.querySelector("#play").textContent="Reproduzir"}update();if(playing)requestAnimationFrame(tick)}
-document.querySelector("#play").onclick=()=>{playing=!playing;last=0;document.querySelector("#play").textContent=playing?"Pausar":"Reproduzir";if(playing)requestAnimationFrame(tick)};
+document.querySelector("#play").onclick=()=>{if(!video.src)return;if(video.paused){video.play();document.querySelector("#play").textContent="Pausar"}else{video.pause();document.querySelector("#play").textContent="Reproduzir"}};
+document.querySelector("#speed").onchange=e=>video.playbackRate=Number(e.target.value);
+video.ontimeupdate=()=>{current=video.currentTime;update()};
+video.onended=()=>document.querySelector("#play").textContent="Reproduzir";
+document.querySelector("#videoFile").onchange=e=>{const file=e.target.files[0];if(!file)return;if(video.src)URL.revokeObjectURL(video.src);video.src=URL.createObjectURL(file);video.controls=false;document.querySelector("#emptyVideo").style.display="none";document.querySelector("#videoName").textContent=file.name;video.onloadedmetadata=()=>{total=video.duration;captions=captions.map((c,i)=>({...c,start:i*total/captions.length,end:(i+1)*total/captions.length}));renderCards();renderLane();update()}};
 document.querySelector("#apply").onclick=()=>{document.querySelector("#apply").textContent="Aplicado ✓";setTimeout(()=>document.querySelector("#apply").textContent="Aplicar na timeline",1600)};
-function renderLane(){const lane=document.querySelector("#lane");captions.forEach(c=>{let b=document.createElement("div");b.className="block";b.style.left=`${c.start/total*100}%`;b.style.width=`${(c.end-c.start)/total*100}%`;b.textContent=c.text;b.onclick=()=>{current=c.start;update()};lane.appendChild(b)})}
+function renderLane(){const lane=document.querySelector("#lane");lane.innerHTML="";captions.forEach(c=>{let b=document.createElement("div");b.className="block";b.style.left=`${c.start/total*100}%`;b.style.width=`${(c.end-c.start)/total*100}%`;b.textContent=c.text;b.onclick=()=>{current=c.start;if(video.src)video.currentTime=current;update()};lane.appendChild(b)})}
+function saveProject(){localStorage.setItem("viralume-project",JSON.stringify({name:document.querySelector("#projectName").value,captions}));document.querySelector("#save").textContent="Salvo ✓";setTimeout(()=>document.querySelector("#save").textContent="Salvar rascunho",1300)}
+document.querySelector("#save").onclick=saveProject;
+const saved=localStorage.getItem("viralume-project");if(saved){try{const p=JSON.parse(saved);captions=p.captions||captions;document.querySelector("#projectName").value=p.name||"Novo projeto"}catch{}}
 renderCards();renderLane();update();
 </script>
 </body></html>
