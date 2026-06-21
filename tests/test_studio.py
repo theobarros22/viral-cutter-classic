@@ -8,9 +8,20 @@ from studio.viral_effects import (
     filtros_sfx,
 )
 from studio.smart_layouts import filtro_regiao, plano_layout, validar_layout
+from studio.voice_enhancer import filtro_voz
 
 
 class TestStudio(unittest.TestCase):
+    def test_preset_podcast_limpa_e_normaliza(self):
+        filtro = filtro_voz("podcast")
+        self.assertIn("afftdn", filtro)
+        self.assertIn("acompressor", filtro)
+        self.assertIn("loudnorm", filtro)
+
+    def test_preset_voz_invalido_falha(self):
+        with self.assertRaises(ValueError):
+            filtro_voz("radio-magico")
+
     def test_layout_desconhecido_volta_para_solo(self):
         self.assertEqual(validar_layout("inexistente"), "solo")
 

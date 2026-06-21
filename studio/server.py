@@ -10,12 +10,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from project import salvar_projeto
+from voice_enhancer import filtro_voz
 
 
 PORTA = 8766
 PASTA_STUDIO = Path(__file__).resolve().parent
 PASTA_EXPORT = Path(r"D:\CORTE VIRAL\studio\exports")
 PASTA_PROJETOS = Path(r"D:\CORTE VIRAL\studio\projects")
+PASTA_AUDIO = Path(r"D:\CORTE VIRAL\studio\exports\audio_aprimorado")
 
 
 class ViralumeHandler(SimpleHTTPRequestHandler):
@@ -26,6 +28,9 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
         rota = urlparse(self.path).path
         if rota == "/api/project":
             self._salvar_projeto()
+            return
+        if rota == "/api/enhance-voice":
+            self._aprimorar_voz()
             return
         if rota != "/api/quick-cut":
             self.send_error(404)
@@ -99,6 +104,44 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
             self._json({"ok": False, "erro": str(erro)}, status=400)
         except Exception as erro:
             self._json({"ok": False, "erro": f"Falha ao salvar: {erro}"}, status=500)
+
+    def _aprimorar_voz(self):
+        caminho_entrada = None
+        try:
+            tamanho = int(self.headers.get("Content-Length", "0"))
+            if tamanho <= 0:
+                raise ValueError("O video enviado esta vazio.")
+            preset = self.headers.get("X-Voice-Preset", "podcast")
+            filtro = filtro_voz(preset)
+            nome = os.path.basename(self.headers.get("X-File-Name", "video.mp4"))
+            base, extensao = os.path.splitext(nome)
+            extensao = extensao if extensao.lower() in {".mp4", ".mov", ".mkv", ".webm"} else ".mp4"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extensao) as temporario:
+                restante = tamanho
+                while restante:
+                    bloco = self.rfile.read(min(1024 * 1024, restante))
+                    if not bloco:
+                        break
+                    temporario.write(bloco)
+                    restante -= len(bloco)
+                caminho_entrada = temporario.name
+            PASTA_AUDIO.mkdir(parents=True, exist_ok=True)
+            saida = PASTA_AUDIO / f"{_nome_seguro(base)}_voz_{preset}.mp4"
+            ffmpeg = shutil.which("ffmpeg") or str(PASTA_STUDIO.parent / "tools" / "ffmpeg.exe")
+            comando = [
+                ffmpeg, "-y", "-i", caminho_entrada, "-map", "0:v?", "-map", "0:a:0",
+                "-c:v", "copy", "-af", filtro, "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(saida),
+            ]
+            resultado = subprocess.run(comando, capture_output=True, text=True)
+            if resultado.returncode != 0:
+                raise RuntimeError(resultado.stderr[-800:])
+            self._json({"ok": True, "arquivo": str(saida), "preset": preset})
+        except Exception as erro:
+            self._json({"ok": False, "erro": str(erro)}, status=400)
+        finally:
+            if caminho_entrada and os.path.exists(caminho_entrada):
+                os.remove(caminho_entrada)
 
     def _json(self, dados, status=200):
         corpo = json.dumps(dados, ensure_ascii=False).encode("utf-8")
