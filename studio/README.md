@@ -37,6 +37,9 @@ Aplicativo novo e separado do Viral Cutter Classic 2.3.1.
 - preset Social Campaign com headline em blocos;
 - pergunta circulada, copy explicativa e CTA inferior;
 - espaço para marca e informações de campanha.
+- preset Grunge Collage com recortes e papel;
+- estética xerox/jornal, preto, creme e laranja;
+- tipografia condensada e composição assimétrica.
 
 ## Executar a prévia
 
