@@ -15,11 +15,6 @@ import re
 import subprocess
 import os
 import tempfile
-import hashlib
-from runtime import pasta_dados
-
-
-_MODELO_WHISPER_ATUAL = {"chave": None, "modelo": None}
 
 
 def _obter_duracao_segundos(caminho: str) -> float:
@@ -59,11 +54,6 @@ def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str =
     Para vídeos longos (>20 min), processa em chunks de 20 minutos
     para evitar estouro de memória no espectrograma.
     """
-    cache = _carregar_cache_transcricao(caminho_video, idioma, modelo_nome)
-    if cache is not None:
-        print("⚡ Transcrição encontrada no cache. Pulando Whisper.")
-        return cache
-
     dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dispositivo == "cuda":
@@ -73,19 +63,7 @@ def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str =
         print("💻 GPU não disponível — usando CPU (mais lento)")
 
     print(f"🎙️ Carregando modelo Whisper '{modelo_nome}'...")
-    chave_modelo = (modelo_nome, dispositivo)
-    modelo = _MODELO_WHISPER_ATUAL["modelo"] if _MODELO_WHISPER_ATUAL["chave"] == chave_modelo else None
-    if modelo is None:
-        # Mantém somente um modelo na memória para não estourar a VRAM ao
-        # alternar entre small/medium/large.
-        _MODELO_WHISPER_ATUAL["modelo"] = None
-        if dispositivo == "cuda":
-            torch.cuda.empty_cache()
-        modelo = whisper.load_model(modelo_nome, device=dispositivo)
-        _MODELO_WHISPER_ATUAL["chave"] = chave_modelo
-        _MODELO_WHISPER_ATUAL["modelo"] = modelo
-    else:
-        print(f"⚡ Modelo Whisper '{modelo_nome}' já carregado.")
+    modelo = whisper.load_model(modelo_nome, device=dispositivo)
 
     # Descobre a duração total do vídeo
     duracao_total = _obter_duracao_segundos(caminho_video)
@@ -94,48 +72,16 @@ def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str =
     CHUNK_SEGUNDOS = 1200  # 20 minutos por chunk
 
     if duracao_total <= CHUNK_SEGUNDOS:
-        resultado = _transcrever_direto(modelo, caminho_video, idioma, dispositivo)
+        return _transcrever_direto(modelo, caminho_video, idioma, dispositivo)
     else:
-        resultado = _transcrever_em_chunks(
-            modelo, caminho_video, idioma, dispositivo, duracao_total, CHUNK_SEGUNDOS
-        )
-
-    _salvar_cache_transcricao(caminho_video, idioma, modelo_nome, resultado)
-    return resultado
-
-
-def _caminho_cache_transcricao(caminho_video: str, idioma: str, modelo_nome: str) -> str:
-    stat = os.stat(caminho_video)
-    chave = f"{os.path.abspath(caminho_video)}|{stat.st_size}|{stat.st_mtime_ns}|{idioma}|{modelo_nome}"
-    nome = hashlib.sha256(chave.encode("utf-8")).hexdigest() + ".json"
-    pasta = os.path.join(pasta_dados(), "cache_transcricoes")
-    os.makedirs(pasta, exist_ok=True)
-    return os.path.join(pasta, nome)
-
-
-def _carregar_cache_transcricao(caminho_video: str, idioma: str, modelo_nome: str):
-    try:
-        caminho = _caminho_cache_transcricao(caminho_video, idioma, modelo_nome)
-        with open(caminho, "r", encoding="utf-8") as arquivo:
-            return json.load(arquivo)
-    except (OSError, ValueError):
-        return None
-
-
-def _salvar_cache_transcricao(caminho_video: str, idioma: str, modelo_nome: str, resultado: dict):
-    try:
-        caminho = _caminho_cache_transcricao(caminho_video, idioma, modelo_nome)
-        with open(caminho, "w", encoding="utf-8") as arquivo:
-            json.dump(resultado, arquivo, ensure_ascii=False)
-    except (OSError, TypeError):
-        pass
+        return _transcrever_em_chunks(modelo, caminho_video, idioma, dispositivo,
+                                       duracao_total, CHUNK_SEGUNDOS)
 
 
 def _transcrever_direto(modelo, caminho_video: str, idioma: str, dispositivo: str) -> dict:
     """Extrai áudio para WAV temporário e transcreve de uma vez."""
     pasta_temp = tempfile.gettempdir()
-    fd, wav_temp = tempfile.mkstemp(dir=pasta_temp, suffix="_whisper_audio.wav")
-    os.close(fd)
+    wav_temp = os.path.join(pasta_temp, "_whisper_audio_temp.wav")
 
     try:
         print("🔊 Extraindo áudio do vídeo...")
@@ -143,14 +89,16 @@ def _transcrever_direto(modelo, caminho_video: str, idioma: str, dispositivo: st
             print("⚠️ Falha ao extrair áudio, tentando direto no vídeo...")
             resultado = modelo.transcribe(
                 caminho_video, language=idioma, verbose=False,
-                fp16=(dispositivo == "cuda")
+                fp16=(dispositivo == "cuda"),
+                word_timestamps=True
             )
             return resultado
 
         print("🎙️ Transcrevendo áudio... (isso pode demorar alguns minutos)")
         resultado = modelo.transcribe(
             wav_temp, language=idioma, verbose=False,
-            fp16=(dispositivo == "cuda")
+            fp16=(dispositivo == "cuda"),
+            word_timestamps=True
         )
         print(f"✅ Transcrição concluída! {len(resultado['segments'])} segmentos encontrados.")
         return resultado
@@ -182,8 +130,7 @@ def _transcrever_em_chunks(modelo, caminho_video: str, idioma: str,
         if inicio >= duracao_total:
             break
 
-        fd, wav_chunk = tempfile.mkstemp(dir=pasta_temp, suffix=f"_whisper_chunk_{i}.wav")
-        os.close(fd)
+        wav_chunk = os.path.join(pasta_temp, f"_whisper_chunk_{i}.wav")
         print(f"   🔊 Chunk {i+1}/{n_chunks}: {inicio/60:.1f}min → {min((inicio+chunk_seg)/60, duracao_total/60):.1f}min")
 
         try:
@@ -193,7 +140,8 @@ def _transcrever_em_chunks(modelo, caminho_video: str, idioma: str,
 
             resultado_chunk = modelo.transcribe(
                 wav_chunk, language=idioma, verbose=False,
-                fp16=(dispositivo == "cuda")
+                fp16=(dispositivo == "cuda"),
+                word_timestamps=True
             )
 
             offset = inicio_real
@@ -201,6 +149,13 @@ def _transcrever_em_chunks(modelo, caminho_video: str, idioma: str,
                 seg_corrigido = dict(seg)
                 seg_corrigido["start"] += offset
                 seg_corrigido["end"]   += offset
+
+                # Corrige timestamps das palavras também
+                if "words" in seg_corrigido and seg_corrigido["words"]:
+                    seg_corrigido["words"] = [
+                        {**w, "start": w["start"] + offset, "end": w["end"] + offset}
+                        for w in seg_corrigido["words"]
+                    ]
 
                 if todos_segmentos:
                     ultimo_fim = todos_segmentos[-1]["end"]
@@ -240,13 +195,23 @@ def segmentar_por_assunto(
     """
     if modo_offline:
         print("📴 Modo offline — usando análise local...")
-        return _segmentar_offline(transcricao, duracao_min, duracao_max)
+        segmentos = _segmentar_offline(transcricao, duracao_min, duracao_max)
     else:
         try:
-            return _segmentar_com_ia(transcricao, duracao_min, duracao_max, nicho)
+            segmentos = _segmentar_com_ia(transcricao, duracao_min, duracao_max, nicho)
         except Exception as e:
-            print(f"⚠️ Análise online falhou ({e}). Usando modo offline automaticamente...")
-            return _segmentar_offline(transcricao, duracao_min, duracao_max)
+            if "credit" in str(e).lower() or "balance" in str(e).lower() or "billing" in str(e).lower():
+                print("⚠️ Créditos da API insuficientes. Usando modo offline automaticamente...")
+                segmentos = _segmentar_offline(transcricao, duracao_min, duracao_max)
+            else:
+                raise
+
+    # Ajuste de score por nicho — roda em ambos os modos
+    if segmentos and nicho and nicho != "geral":
+        print(f"\n🎯 Ajustando scores para nicho: {nicho.upper()}...")
+        segmentos = ajustar_score_por_nicho(segmentos, nicho)
+
+    return segmentos
 
 
 def _segmentar_com_ia(transcricao: dict, duracao_min: int, duracao_max: int, nicho: str) -> list:
@@ -267,6 +232,7 @@ def _segmentar_com_ia(transcricao: dict, duracao_min: int, duracao_max: int, nic
         "geral":     "engajamento geral, momentos de impacto emocional, frases marcantes",
         "podcast":   "opiniões fortes, revelações, discordâncias, histórias pessoais, frases de efeito",
         "casamento": "momentos emocionantes, votos, reações, surpresas, choro de alegria",
+        "crime":     "revelações chocantes, confissões, viradas de investigação, momentos de tensão máxima",
         "crime":     "revelações, viradas, momentos de tensão, confissões, detalhes chocantes",
         "esporte":   "gols, jogadas incríveis, reações, comemorações, momentos decisivos",
         "educacao":  "insights práticos, dicas aplicáveis, estatísticas surpreendentes, analogias",
@@ -469,3 +435,226 @@ def _calcular_score_offline(texto: str, palavras_impacto: list) -> int:
 
     # Limita entre 1 e 10
     return max(1, min(10, score))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SCORE POR NICHO — pós-processamento aplicado em ambos os modos (IA e offline)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_NICHO_CONFIG = {
+    "podcast": {
+        "descricao": "Podcast / Entrevista",
+        # Palavras que adicionam +1 ao score (máx. +2 total por categoria)
+        "palavras_alta_viralidade": [
+            "nunca", "sempre", "impossível", "discordo", "mentira", "verdade",
+            "confessou", "revelou", "segredo", "polêmico", "nunca contei",
+            "primeira vez", "surpreendente", "chocante", "absurdo",
+            "contraditório", "exatamente o oposto", "curiosamente",
+        ],
+        "palavras_narrativa_pessoal": [
+            "quando eu", "na minha vida", "minha história", "passei por",
+            "aprendi que", "mudou minha", "transformou", "experiência",
+            "aconteceu comigo", "lembro quando",
+        ],
+        "palavras_engajamento": [
+            "o que você acha", "concorda", "discorda", "pergunta",
+            "deixa eu te perguntar", "você sabia", "imagina",
+        ],
+        # Penaliza conteúdo genérico e sem opinião
+        "palavras_penalizar": [
+            "bom dia", "boa tarde", "bem-vindo", "hoje vamos falar",
+            "canal", "inscreva-se", "like", "comentem",
+        ],
+        # Pesos: quanto cada sinal vale no ajuste final (-2 a +2)
+        "peso_perguntas": 1.2,
+        "peso_exclamacoes": 0.8,
+        "peso_duracao_ideal": (45, 90),   # faixa de duração considerada ideal (s)
+        "bonus_duracao_ideal": 1,
+    },
+    "casamento": {
+        "descricao": "Casamento / Cerimônia",
+        "palavras_alta_viralidade": [
+            "te amo", "amor da minha vida", "para sempre", "prometo",
+            "emocionante", "lágrimas", "choro", "surpresa", "inacreditável",
+            "lindo", "linda", "maravilhoso", "feliz", "especial",
+            "inesquecível", "perfeito", "momento único",
+        ],
+        "palavras_narrativa_pessoal": [
+            "quando te vi", "nossa história", "desde quando", "sempre soube",
+            "meu coração", "mudou tudo", "nunca imaginei",
+        ],
+        "palavras_engajamento": [
+            "chora", "que lindo", "que emoção", "nossa", "gente",
+        ],
+        "palavras_penalizar": [
+            "orçamento", "fornecedor", "pacote", "buffet", "contrato",
+            "preço", "valor", "parcelado",
+        ],
+        "peso_perguntas": 0.5,
+        "peso_exclamacoes": 1.5,
+        "peso_duracao_ideal": (30, 75),
+        "bonus_duracao_ideal": 1,
+    },
+    "esporte": {
+        "descricao": "Esporte / Competição",
+        "palavras_alta_viralidade": [
+            "gol", "impossível", "inacreditável", "recorde", "nunca visto",
+            "campeão", "vitória", "derrota", "decisivo", "final",
+            "virada", "empate", "pênalti", "expulsão", "lesão",
+            "melhor do mundo", "história", "lendário",
+        ],
+        "palavras_narrativa_pessoal": [
+            "jogada do", "momento que", "torcida", "estádio", "emoção",
+        ],
+        "palavras_engajamento": [
+            "que jogada", "olha isso", "não acredito", "incrível",
+        ],
+        "palavras_penalizar": [
+            "patrocinador", "contrato", "rescisão", "salário",
+        ],
+        "peso_perguntas": 0.7,
+        "peso_exclamacoes": 1.8,
+        "peso_duracao_ideal": (20, 60),
+        "bonus_duracao_ideal": 1,
+    },
+    "crime": {
+        "descricao": "Crime / Investigação",
+        "palavras_alta_viralidade": [
+            "confissão", "assassinato", "suspeito", "culpado", "inocente",
+            "revelação", "prova", "evidência", "mistério", "chocante",
+            "nunca revelado", "segredo", "documentos", "testemunha",
+            "investigação", "descoberta",
+        ],
+        "palavras_narrativa_pessoal": [
+            "crime aconteceu", "quando encontraram", "na madrugada",
+            "ninguém sabia", "anos depois", "descobriram que",
+        ],
+        "palavras_engajamento": [
+            "você vai se chocar", "parece mentira", "inacreditável",
+            "impossível acreditar",
+        ],
+        "palavras_penalizar": [],
+        "peso_perguntas": 1.5,
+        "peso_exclamacoes": 1.0,
+        "peso_duracao_ideal": (45, 120),
+        "bonus_duracao_ideal": 1,
+    },
+    "educacao": {
+        "descricao": "Educação / Conteúdo Didático",
+        "palavras_alta_viralidade": [
+            "você não sabia", "erro comum", "a maioria erra", "dica",
+            "segredo", "truque", "hack", "pesquisa mostra", "estudos",
+            "estatística", "surpreendente", "na prática", "resultado",
+            "mudou minha", "funciona assim", "por que isso acontece",
+        ],
+        "palavras_narrativa_pessoal": [
+            "aprendi que", "descobri que", "testei", "funcionou",
+            "na prática", "exemplo real",
+        ],
+        "palavras_engajamento": [
+            "você sabia que", "imagine", "pensa comigo",
+            "como assim", "por quê",
+        ],
+        "palavras_penalizar": [
+            "introdução", "capítulo", "aula", "módulo", "assista até o final",
+        ],
+        "peso_perguntas": 1.8,
+        "peso_exclamacoes": 0.7,
+        "peso_duracao_ideal": (40, 90),
+        "bonus_duracao_ideal": 1,
+    },
+    "geral": {
+        "descricao": "Conteúdo Geral",
+        "palavras_alta_viralidade": [
+            "incrível", "impossível", "nunca", "sempre", "segredo",
+            "revelação", "surpreendente", "chocante", "absurdo",
+        ],
+        "palavras_narrativa_pessoal": [
+            "minha história", "aconteceu comigo", "aprendi",
+        ],
+        "palavras_engajamento": [
+            "você sabia", "imagina", "pensa",
+        ],
+        "palavras_penalizar": [],
+        "peso_perguntas": 1.0,
+        "peso_exclamacoes": 1.0,
+        "peso_duracao_ideal": (30, 90),
+        "bonus_duracao_ideal": 0,
+    },
+}
+
+
+def ajustar_score_por_nicho(segmentos: list, nicho: str) -> list:
+    """
+    Pós-processa os scores de viralidade aplicando pesos específicos do nicho.
+
+    Funciona em cima de qualquer score — seja gerado pela IA (Claude) ou offline.
+    Não substitui: apenas calibra o score com sinais que o modelo geral pode ignorar.
+
+    Regras:
+    - Máximo de ajuste: ±2 pontos
+    - Score final sempre entre 1 e 10
+    - Registra o ajuste em 'score_ajuste' para debug
+    """
+    cfg = _NICHO_CONFIG.get(nicho, _NICHO_CONFIG["geral"])
+
+    ajustados = []
+    for seg in segmentos:
+        texto = (seg.get("resumo", "") + " " + seg.get("titulo", "")).lower()
+        score_original = seg.get("score_viral", 5)
+        ajuste = 0.0
+
+        # ── Palavras de alta viralidade para o nicho ──────────────────────
+        hits_virais = sum(1 for p in cfg["palavras_alta_viralidade"] if p in texto)
+        if hits_virais >= 3:
+            ajuste += 1.0
+        elif hits_virais >= 1:
+            ajuste += 0.5
+
+        # ── Narrativa pessoal / história ──────────────────────────────────
+        hits_narrativa = sum(1 for p in cfg["palavras_narrativa_pessoal"] if p in texto)
+        if hits_narrativa >= 2:
+            ajuste += 0.5
+        elif hits_narrativa >= 1:
+            ajuste += 0.25
+
+        # ── Palavras de engajamento ───────────────────────────────────────
+        hits_eng = sum(1 for p in cfg["palavras_engajamento"] if p in texto)
+        if hits_eng >= 1:
+            ajuste += 0.25
+
+        # ── Penaliza conteúdo genérico ────────────────────────────────────
+        hits_penal = sum(1 for p in cfg["palavras_penalizar"] if p in texto)
+        if hits_penal >= 2:
+            ajuste -= 1.0
+        elif hits_penal >= 1:
+            ajuste -= 0.5
+
+        # ── Duração ideal para o nicho ────────────────────────────────────
+        duracao = seg.get("duracao") or (seg.get("fim", 0) - seg.get("inicio", 0))
+        dur_min, dur_max = cfg["peso_duracao_ideal"]
+        if dur_min <= duracao <= dur_max:
+            ajuste += cfg["bonus_duracao_ideal"]
+
+        # ── Aplica pesos de perguntas e exclamações no título/resumo ─────
+        n_perguntas = texto.count("?")
+        n_exclamacoes = texto.count("!")
+        ajuste += min(0.5, n_perguntas * cfg["peso_perguntas"] * 0.2)
+        ajuste += min(0.5, n_exclamacoes * cfg["peso_exclamacoes"] * 0.15)
+
+        # ── Limita o ajuste total a ±2 e o score final a [1, 10] ─────────
+        ajuste = max(-2.0, min(2.0, ajuste))
+        score_novo = round(max(1, min(10, score_original + ajuste)))
+
+        copia = dict(seg)
+        copia["score_viral"] = score_novo
+        copia["score_ajuste"] = round(ajuste, 2)
+        copia["nicho"] = nicho
+        ajustados.append(copia)
+
+        if ajuste != 0:
+            sinal = "+" if ajuste > 0 else ""
+            print(f"   Score [{seg.get('titulo', '?')[:30]}]: "
+                  f"{score_original} → {score_novo} ({sinal}{ajuste:.1f} | nicho={nicho})")
+
+    return ajustados

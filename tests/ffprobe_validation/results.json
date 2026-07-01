@@ -1,0 +1,235 @@
+{
+  "generated_at": "2026-06-22T00:44:32.185998",
+  "results": [
+    {
+      "test_id": "C1",
+      "description": "MP4 válido com áudio (required)",
+      "status": "PASS",
+      "expected_summary": "valid=True, audio_present=True",
+      "actual_summary": "valid=True, audio=True, dur=10.0s",
+      "evidence": "codec=h264, 1280x720",
+      "failure_reason": "",
+      "valid": true,
+      "video_present": true,
+      "audio_present": true,
+      "duration": 10.0,
+      "errors": [],
+      "warnings": [],
+      "video_codec": "h264",
+      "audio_codec": "aac",
+      "timestamp": "2026-06-22T00:44:32.250464"
+    },
+    {
+      "test_id": "C2",
+      "description": "MP4 sem áudio, policy=optional (B-roll)",
+      "status": "PASS",
+      "expected_summary": "valid=True, audio_present=False, warnings>0",
+      "actual_summary": "valid=True, warnings=['Clipe sem trilha de áudio (aceito — audio_policy=optional).']",
+      "evidence": "errors=[]",
+      "failure_reason": "",
+      "valid": true,
+      "video_present": true,
+      "audio_present": false,
+      "errors": [],
+      "warnings": [
+        "Clipe sem trilha de áudio (aceito — audio_policy=optional)."
+      ],
+      "timestamp": "2026-06-22T00:44:32.323413"
+    },
+    {
+      "test_id": "C2b",
+      "description": "MP4 sem áudio, policy=none",
+      "status": "PASS",
+      "expected_summary": "valid=True, sem verificação de áudio",
+      "actual_summary": "valid=True, errors=[]",
+      "evidence": "warnings=[]",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.364218"
+    },
+    {
+      "test_id": "C3",
+      "description": "MP4 sem áudio, policy=required → falha + rename + max 1 retry",
+      "status": "PASS",
+      "expected_summary": "valid=False, renomeado, retry≤1",
+      "actual_summary": "valid=False, retry_count=2, renamed=True",
+      "evidence": "errors=['Áudio obrigatório ausente (audio_policy=required).']",
+      "failure_reason": "",
+      "retry_count": 2,
+      "timestamp": "2026-06-22T00:44:32.469167"
+    },
+    {
+      "test_id": "C4",
+      "description": "Arquivo vazio (0 bytes)",
+      "status": "PASS",
+      "expected_summary": "valid=False, erro de arquivo vazio",
+      "actual_summary": "valid=False, errors=['Arquivo com tamanho zero.']",
+      "evidence": "file_size=0",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.469167"
+    },
+    {
+      "test_id": "C5",
+      "description": "Arquivo corrompido — sem loop infinito",
+      "status": "PASS",
+      "expected_summary": "valid=False, retry≤1, sem loop",
+      "actual_summary": "valid=False, retry_calls=2",
+      "evidence": "errors=['Arquivo não encontrado.']",
+      "failure_reason": "",
+      "retry_count": 2,
+      "timestamp": "2026-06-22T00:44:32.509008"
+    },
+    {
+      "test_id": "C6",
+      "description": "Arquivo apenas áudio — sem stream de vídeo",
+      "status": "PASS",
+      "expected_summary": "valid=False, video_present=False",
+      "actual_summary": "valid=False, video_present=False",
+      "evidence": "errors=['Nenhum stream de vídeo encontrado.']",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.553608"
+    },
+    {
+      "test_id": "C7",
+      "description": "Duração dentro da tolerância (9.8s vs 10s esperado)",
+      "status": "PASS",
+      "expected_summary": "valid=True, diff<tolerância",
+      "actual_summary": "valid=True, dur=9.80s, diff=0.2",
+      "evidence": "tol=0.5s",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.595889"
+    },
+    {
+      "test_id": "C8",
+      "description": "Duração fora da tolerância (7s vs 10s esperado)",
+      "status": "PASS",
+      "expected_summary": "valid=False, erro de duração, retry≤1",
+      "actual_summary": "valid=False, retry=2, diff=3.0",
+      "evidence": "errors=['Duração real (7.00s) difere da esperada (10.00s) em 3.00s (tolerância: 0.50s).']",
+      "failure_reason": "",
+      "retry_count": 2,
+      "timestamp": "2026-06-22T00:44:32.791421"
+    },
+    {
+      "test_id": "C9",
+      "description": "FFprobe indisponível — erro explícito sem crash",
+      "status": "PASS",
+      "expected_summary": "valid=False, erro ffprobe_not_found",
+      "actual_summary": "valid=False, errors=['FFprobe não encontrado no sistema.']",
+      "evidence": "FFprobe path injetado como inválido",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.791421"
+    },
+    {
+      "test_id": "C10",
+      "description": "Timeout do FFprobe (timeout=0s)",
+      "status": "PASS",
+      "expected_summary": "valid=False, erro timeout",
+      "actual_summary": "valid=False, errors=['FFprobe excedeu o timeout de 0s.']",
+      "evidence": "timeout=0 injetado",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:32.805508"
+    },
+    {
+      "test_id": "C11",
+      "description": "Fallback libx264 — arquivo final válido",
+      "status": "PASS",
+      "expected_summary": "valid=True, codec=h264",
+      "actual_summary": "valid=True, codec=h264, encoder_used=libx264",
+      "evidence": "errors=[]",
+      "encoder_used": "libx264",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.004011"
+    },
+    {
+      "test_id": "C12",
+      "description": "Versão viral inválida — original preservado",
+      "status": "PASS",
+      "expected_summary": "original válido, viral renomeado, efeito_falhou=True",
+      "actual_summary": "orig_ok=True, efeito_falhou=True, orig_exists=True",
+      "evidence": "arquivo_viral→original=C:\\Users\\Theo Barros\\Claude\\Projects\\CORTE VIRAL\\tests\\ffprobe_validation\\work\\c12_original.mp4",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.097027"
+    },
+    {
+      "test_id": "C13",
+      "description": "Clipe inválido entre vários — pipeline continua",
+      "status": "PASS",
+      "expected_summary": "2 válidos, 1 inválido, pipeline não aborta",
+      "actual_summary": "validos=2, invalidos=1, processados=3",
+      "evidence": "[{'name': 'c13_clip1.mp4', 'expected_valid': True, 'got_valid': True, 'ok': True, 'errors': []}, {'name': 'c13_clip2.mp4', 'expected_valid': False, 'got_valid': False, 'ok': True, 'errors': ['FFprobe retornou código 1. [mov,mp4,m4a,3gp,3g2,mj2 @ 00000250f93b0d40] moov atom not found\\nC:\\\\Users\\\\Theo Barros\\\\Claude\\\\Projects\\\\CORTE VIRAL\\\\tests\\\\ffprobe_validation\\\\work\\\\c13_clip2.mp4: Invalid data found when processing input']}, {'name': 'c13_clip3.mp4', 'expected_valid': True, 'got_valid': True, 'ok': True, 'errors': []}]",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.259059"
+    },
+    {
+      "test_id": "C14",
+      "description": "Cancelamento antes do retry — sem nova tentativa",
+      "status": "PASS",
+      "expected_summary": "cancelado=True, retry_count=1, status=cancelado",
+      "actual_summary": "cancelled=True, export_calls=1",
+      "evidence": "logs=[' Exportando (tentativa 1/2)...', ' Validando arquivo exportado...', ' ❌ Validação: FFprobe retornou código 1. [mov,mp4,m4a,3gp,3g2,mj2 @ 0000021ca3701e40] moov atom not found\\nC:\\\\Users\\\\Theo Barros\\\\Claude\\\\Projects\\\\CORTE VIRAL\\\\tests\\\\ffprobe_validation\\\\work\\\\c14_cancel.mp4: Invalid data found when processing input']",
+      "failure_reason": "",
+      "cancelled": true,
+      "retry_count": 1,
+      "timestamp": "2026-06-22T00:44:33.297791"
+    },
+    {
+      "test_id": "A1",
+      "description": "Arquivo com acentos e espaços no nome",
+      "status": "PASS",
+      "expected_summary": "valid=True",
+      "actual_summary": "valid=True, errors=[]",
+      "evidence": "fixture: vídeo válido com espaços.mp4",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.332826"
+    },
+    {
+      "test_id": "A2",
+      "description": "Renomear arquivo quando .invalid.mp4 já existe",
+      "status": "PASS",
+      "expected_summary": "sem crash, arquivo renomeado",
+      "actual_summary": "result=C:\\Users\\Theo Barros\\Claude\\Projects\\CORTE VIRAL\\tests\\ffprobe_validation\\work\\a2_test.invalid.mp4",
+      "evidence": "novo=C:\\Users\\Theo Barros\\Claude\\Projects\\CORTE VIRAL\\tests\\ffprobe_validation\\work\\a2_test.invalid.mp4",
+      "timestamp": "2026-06-22T00:44:33.333974"
+    },
+    {
+      "test_id": "A3",
+      "description": "JSON incompleto do FFprobe — falha graciosamente",
+      "status": "PASS",
+      "expected_summary": "valid=False, erro de parse",
+      "actual_summary": "valid=False, errors=[\"Resposta do FFprobe não é JSON válido: Expecting ',' delimiter: line 1 column 29 (char 28)\"]",
+      "evidence": "JSON injetado incompleto",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.337491"
+    },
+    {
+      "test_id": "A4",
+      "description": "Múltiplos streams de áudio — válido",
+      "status": "PASS",
+      "expected_summary": "valid=True, audio_present=True",
+      "actual_summary": "valid=True, audio=True",
+      "evidence": "audio_codec=aac",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.371110"
+    },
+    {
+      "test_id": "A5",
+      "description": "Codec de vídeo VP9 (não H.264) — válido",
+      "status": "PASS",
+      "expected_summary": "valid=True, video_codec=vp9",
+      "actual_summary": "valid=True, codec=vp9",
+      "evidence": "errors=[]",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.404311"
+    },
+    {
+      "test_id": "A6",
+      "description": "Duração disponível no container (fallback)",
+      "status": "PASS",
+      "expected_summary": "valid=True, duration preenchida",
+      "actual_summary": "valid=True, dur=10.0",
+      "evidence": "duration_difference=0.0",
+      "failure_reason": "",
+      "timestamp": "2026-06-22T00:44:33.438726"
+    }
+  ]
+}

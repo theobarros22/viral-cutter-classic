@@ -55,7 +55,7 @@
     <div class="gpu mono">● RTX 3050 disponível</div>
   </aside>
   <main>
-    <header><div><b>Viralume Caption Studio</b><div class="mono">Edição estruturada em lote</div></div><div><input class="project-name" id="projectName" value="Novo projeto"> <label class="secondary file-label" for="srtFile">Importar SRT</label><input class="file-input" id="srtFile" type="file" accept=".srt,application/x-subrip,text/plain"> <button class="secondary" id="exportSrt">Exportar SRT</button> <button class="secondary" id="save">Salvar rascunho</button> <button class="primary" id="apply">Aplicar na timeline</button></div></header>
+    <header><div><b>Viralume Caption Studio</b><div class="mono">Edição estruturada em lote</div></div><div><input class="project-name" id="projectName" value="Novo projeto"> <label class="secondary file-label" for="srtFile">Importar SRT</label><input class="file-input" id="srtFile" type="file" accept=".srt,application/x-subrip,text/plain"> <button class="secondary" id="exportSrt">Exportar SRT</button> <button class="secondary" id="save">Salvar rascunho</button> <button class="primary" id="apply">Aplicar na timeline</button> <button class="primary" id="renderFinal" style="background:var(--hot)">Exportar Vídeo Final</button></div></header>
     <div class="quick-workspace" id="quickWorkspace">
       <section class="panel"><div class="panel-head"><div><b>Corte rápido sem recodificação</b><div class="mono">Marque entrada e saída no vídeo</div></div><label class="primary file-label" for="quickFile">Carregar vídeo</label><input class="file-input" id="quickFile" type="file" accept="video/*"></div><div class="player-wrap"><div class="phone"><video id="quickVideo" controls playsinline></video></div></div></section>
       <section class="panel quick-side"><b>Viralume Quick</b><p class="mono">Corte direto de stream · máxima velocidade</p><div class="mark-grid"><div class="mark"><span class="mono">Entrada · tecla I</span><b id="markIn">00:00.00</b><button class="secondary" id="setIn">Marcar entrada</button></div><div class="mark"><span class="mono">Saída · tecla O</span><b id="markOut">00:00.00</b><button class="secondary" id="setOut">Marcar saída</button></div></div><button class="primary" id="quickExport" style="width:100%">Exportar corte rápido</button><p class="mono">Atalhos: espaço reproduz · I marca entrada · O marca saída · ← → navega 1 segundo</p><div class="quick-status" id="quickStatus">Aguardando vídeo.</div></section>
@@ -67,7 +67,7 @@
       <section class="panel layout-panel"><div class="panel-head"><div><b>Smart Layouts · Vertical 9:16</b><div class="mono">Exclusivo para Reels, TikTok e Shorts</div></div><div><span class="mono">1080 × 1920</span> <button class="toggle on" id="smartLayoutToggle">Ativo</button></div></div><div class="notice" style="margin-top:10px">LAYOUTS VERTICAIS: estas composições reorganizam câmeras, convidados e B-roll dentro de uma tela 9:16. Não são aplicadas ao formato horizontal ou quadrado.</div><div class="layout-grid" id="layoutGrid"></div></section>
       <section class="panel layout-panel"><div class="panel-head"><div><b>Voz limpa</b><div class="mono">Removedor de ruído e aprimoramento local</div></div><button class="primary" id="enhanceVoice">Processar voz</button></div><div class="director-grid"><div class="director-card"><b>Preset</b><p>Escolha a intensidade sem deixar a voz artificial.</p><select id="voicePreset"><option value="light">Leve · limpeza natural</option><option value="podcast" selected>Podcast · recomendado</option><option value="strong">Forte · ambiente ruidoso</option></select></div><div class="director-card"><b>Processamento</b><p>High-pass, redução FFT, compressor e loudness padrão.</p><button class="toggle on" id="voiceToggle">Ativo</button></div><div class="director-card" style="grid-column:span 3"><b>Status</b><p id="voiceStatus">Carregue um vídeo e clique em Processar voz. O vídeo não será recodificado; somente o áudio.</p></div></div></section>
       <section class="panel">
-        <div class="panel-head"><div><b>Preview vertical 9:16</b><div class="mono" id="videoName">Nenhum vídeo carregado</div></div><div><label class="secondary file-label" for="videoFile">Carregar vídeo</label><input class="file-input" id="videoFile" type="file" accept="video/*"> <button class="secondary">Zonas seguras</button></div></div>
+        <div class="panel-head"><div><b>Preview vertical 9:16</b><div class="mono" id="videoName">Nenhum vídeo carregado</div></div><div><label class="secondary file-label" for="videoFile">Carregar vídeo</label><input class="file-input" id="videoFile" type="file" accept="video/*"> <button class="secondary" id="transcribeBtn">Transcrever com Whisper</button> <button class="secondary">Zonas seguras</button></div></div>
         <div class="player-wrap"><div class="phone"><div class="empty-video" id="emptyVideo"><div><b>CARREGUE UM VÍDEO REAL</b><br><span class="mono">MP4, MOV ou WEBM</span></div></div><video id="video" playsinline></video><div class="poster-layer" id="posterLayer"><div class="poster-eyebrow"><span>CONTEÚDO</span><span>ESTRATÉGIA</span><span>RESULTADO</span></div><div class="poster-title"><small>Se você quer</small>PRENDER A ATENÇÃO,</div><div class="poster-note">comece com uma ideia impossível de ignorar</div><div class="poster-back">O VÍDEO PRECISA<br>FALAR COM VOCÊ</div><i class="poster-square a"></i><i class="poster-square b"></i><i class="poster-square c"></i><div class="poster-subject"></div></div><div class="campaign-layer" id="campaignLayer"><div class="campaign-logo">SUA MARCA</div><div class="campaign-headline"><span>O SEU</span><span>CONTEÚDO</span><span>VAI BEM.</span></div><div class="campaign-arrow">⌁</div><div class="campaign-question">E você?</div><div class="campaign-copy">Aprenda a transformar suas ideias com o <b>método Viralume</b>.</div><div class="campaign-cta"><span>Online<br>com certificado</span><strong>INSCREVA-SE JÁ!</strong></div></div><div class="grunge-layer" id="grungeLayer"><div class="grunge-paper one"><div class="grunge-news">EDIÇÃO ESPECIAL<br><br>Ideias, cultura, estratégia e transformação.</div></div><div class="grunge-paper two"><div class="grunge-news">ARQUIVO CRIATIVO<br>TEXTURA XEROX<br>COLAGEM ANALÓGICA</div></div><div class="grunge-title"><b>CRIE</b> SEM<br>LIMITES</div><div class="grunge-stamp">VIRALUME<br>STUDIO</div><div class="grunge-cutout"></div></div><div class="showcase-layer" id="showcaseLayer"><div class="showcase-top">COM EDIÇÃO</div><div class="showcase-before"></div><div class="showcase-word">QUE <em>VOCÊ</em><small>SE TORNA</small></div><div class="showcase-card">NÃO É BOM<br>SUFICIENTE</div></div><div class="broll-layer" id="brollLayer"><div class="broll-price">U$ 500</div><div class="broll-inset"></div><div class="broll-main"></div><div class="broll-card">🧠</div></div><div class="split-layer" id="splitLayer"><div class="split-head"><b>BEFORE</b><b>AFTER</b></div><div class="split-left"></div><div class="split-right"></div><div class="split-caption"><span>EDIÇÃO EM CAMADAS</span></div></div><div class="insert-stage" id="insertStage"></div><div class="caption" id="caption"></div></div></div>
         <div class="transport"><div class="progress"><span id="progress"></span></div><div class="controls"><button class="primary" id="play">Reproduzir</button><span class="mono" id="clock">00:00.00 / 00:08.40</span><label class="mono">Velocidade <select id="speed"><option value="1">1.0x</option><option value=".75">0.75x</option><option value=".5">0.5x</option></select></label></div></div>
       </section>
@@ -152,5 +152,54 @@ document.querySelector("#quickFile").onchange=e=>{quickFile=e.target.files[0];if
 document.querySelector("#setIn").onclick=()=>{markIn=quickVideo.currentTime;showMarks()};document.querySelector("#setOut").onclick=()=>{markOut=quickVideo.currentTime;showMarks()};
 document.addEventListener("keydown",e=>{if(!document.querySelector("#quickWorkspace").classList.contains("active")||["INPUT","SELECT"].includes(e.target.tagName))return;if(e.code==="Space"){e.preventDefault();quickVideo.paused?quickVideo.play():quickVideo.pause()}if(e.key.toLowerCase()==="i"){markIn=quickVideo.currentTime;showMarks()}if(e.key.toLowerCase()==="o"){markOut=quickVideo.currentTime;showMarks()}if(e.key==="ArrowLeft")quickVideo.currentTime=Math.max(0,quickVideo.currentTime-1);if(e.key==="ArrowRight")quickVideo.currentTime=Math.min(quickVideo.duration||0,quickVideo.currentTime+1)});
 document.querySelector("#quickExport").onclick=async()=>{const status=document.querySelector("#quickStatus");if(!quickFile)return status.textContent="Carregue um vídeo primeiro.";if(markOut<=markIn)return status.textContent="A saída precisa ser maior que a entrada.";status.textContent="Exportando sem recodificação...";try{const r=await fetch("/api/quick-cut",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-File-Name":quickFile.name,"X-Cut-Start":markIn,"X-Cut-End":markOut},body:quickFile}),data=await r.json();if(!data.ok)throw Error(data.erro);status.textContent=`Corte concluído em modo lossless.\n${data.arquivo}\n\n${data.aviso||""}`}catch(err){status.textContent="Falha no corte: "+err.message}};
+document.querySelector("#transcribeBtn").onclick=async()=>{
+  const status=document.querySelector("#videoName");
+  if(!videoFile)return alert("Carregue um vídeo primeiro.");
+  const oldText=status.textContent;
+  status.textContent="Transcrevendo com Whisper...";
+  try{
+    const response=await fetch("/api/transcribe",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/octet-stream",
+        "X-File-Name":videoFile.name
+      },
+      body:videoFile
+    });
+    const data=await response.json();
+    if(!data.ok)throw Error(data.erro);
+    captions=data.captions;
+    renderCards();
+    renderLane();
+    update();
+    status.textContent=oldText;
+    alert("Transcrição concluída com sucesso!");
+  }catch(error){
+    status.textContent="Falha na transcrição";
+    alert("Erro na transcrição: "+error.message);
+  }
+};
+document.querySelector("#renderFinal").onclick=async()=>{
+  const btn=document.querySelector("#renderFinal");
+  btn.textContent="Renderizando...";
+  try{
+    const payload=projectPayload();
+    const response=await fetch("/api/render",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify(payload)
+    });
+    const data=await response.json();
+    if(!data.ok)throw Error(data.erro);
+    btn.textContent="Renderizado! ✓";
+    alert("Vídeo renderizado com sucesso em:\n"+data.arquivo);
+  }catch(error){
+    btn.textContent="Falha na exportação";
+    alert("Erro na renderização: "+error.message);
+  }
+  setTimeout(()=>btn.textContent="Exportar Vídeo Final",3000);
+};
 </script>
 </body></html>
