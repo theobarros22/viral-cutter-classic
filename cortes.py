@@ -11,6 +11,99 @@ from pydub import AudioSegment, silence
 from ffmpeg_utils import argumentos_encoder
 
 
+def calcular_threshold_adaptativo(audio, offset_db: int = 16) -> int:
+    """
+    Calcula o threshold de silêncio com base no volume médio do áudio.
+
+    Um threshold fixo (ex.: -40dB) falha nos extremos:
+    - Vídeo com ruído de fundo alto (festa, rua): quase nada fica abaixo
+      de -40dB e nenhum silêncio é detectado.
+    - Áudio de estúdio muito limpo: até respirações ficam abaixo de -40dB
+      e são cortadas, deixando o ritmo artificial.
+
+    A solução é medir o volume médio (dBFS) e considerar silêncio tudo
+    que estiver `offset_db` abaixo dele, limitado a uma faixa segura.
+
+    Parâmetros:
+        audio: AudioSegment já carregado
+        offset_db: quantos dB abaixo da média conta como silêncio
+
+    Retorna:
+        threshold em dB (entre -60 e -25)
+    """
+    dbfs = audio.dBFS
+    if dbfs == float("-inf"):  # áudio totalmente mudo
+        return -60
+    return int(max(-60, min(-25, dbfs - offset_db)))
+
+
+def refinar_limites_com_palavras(
+    segmentos: list,
+    transcricao: dict,
+    pad_inicio_s: float = 0.20,
+    pad_fim_s: float = 0.30,
+) -> list:
+    """
+    Ajusta o início/fim de cada segmento para os limites reais das palavras.
+
+    O Whisper roda com word_timestamps=True, mas os segmentos da análise
+    usam tempos de *segmento* (frases inteiras, arredondados). Resultado:
+    o corte pode cair no meio de uma palavra. Esta função:
+
+    1. Move o INÍCIO para o começo da primeira palavra dentro do segmento,
+       menos um respiro (pad_inicio_s) — o clipe abre já na fala, sem
+       decapitar a primeira sílaba.
+    2. Move o FIM para o final da última palavra dentro do segmento,
+       mais um respiro (pad_fim_s) — a última palavra termina inteira.
+
+    Parâmetros:
+        segmentos: lista de segmentos com "inicio" e "fim" em segundos
+        transcricao: resultado do Whisper (dict com "segments" → "words")
+        pad_inicio_s: respiro antes da primeira palavra
+        pad_fim_s: respiro depois da última palavra
+
+    Retorna:
+        nova lista de segmentos com limites refinados (originais intactos)
+    """
+    # Achata todas as palavras da transcrição em uma lista ordenada
+    palavras = [
+        {"start": float(w["start"]), "end": float(w["end"])}
+        for seg in (transcricao or {}).get("segments", [])
+        for w in seg.get("words", [])
+        if w.get("start") is not None and w.get("end") is not None
+    ]
+    if not palavras:
+        return list(segmentos)
+    palavras.sort(key=lambda w: w["start"])
+
+    refinados = []
+    for seg in segmentos:
+        inicio, fim = float(seg["inicio"]), float(seg["fim"])
+
+        # Palavras que pertencem ao segmento (tolerância de 0.5s nas bordas
+        # para absorver o arredondamento dos timestamps de segmento)
+        dentro = [w for w in palavras if w["end"] > inicio - 0.5 and w["start"] < fim + 0.5]
+        candidatas = [w for w in dentro if w["start"] >= inicio - 0.5]
+        if not candidatas:
+            refinados.append(seg.copy())
+            continue
+
+        primeira = min(candidatas, key=lambda w: w["start"])
+        ultimas = [w for w in dentro if w["end"] <= fim + 0.5]
+        ultima = max(ultimas, key=lambda w: w["end"]) if ultimas else candidatas[-1]
+
+        novo_inicio = max(0.0, primeira["start"] - pad_inicio_s)
+        novo_fim = ultima["end"] + pad_fim_s
+
+        seg_novo = seg.copy()
+        if novo_fim > novo_inicio:  # segurança: nunca gera segmento invertido
+            seg_novo["inicio"] = round(novo_inicio, 3)
+            seg_novo["fim"] = round(novo_fim, 3)
+        refinados.append(seg_novo)
+
+    return refinados
+
+
 def calcular_intervalos_fala(
     duracao_ms: int,
     silencios: list,
@@ -43,12 +136,20 @@ def remover_silencios(
     caminho_video: str,
     caminho_saida: str,
     min_silencio_ms: int = 700,
-    threshold_db: int = -40,
+    threshold_db: int = None,
     margem_ms: int = 120,
 ) -> dict:
-    """Remove pausas internas e preserva uma pequena respiração entre falas."""
+    """
+    Remove pausas internas e preserva uma pequena respiração entre falas.
+
+    threshold_db=None (padrão) ativa o threshold adaptativo, calculado
+    a partir do volume médio do áudio — mais preciso que um valor fixo.
+    """
     audio = AudioSegment.from_file(caminho_video)
     duracao_ms = len(audio)
+    if threshold_db is None:
+        threshold_db = calcular_threshold_adaptativo(audio)
+        print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {audio.dBFS:.1f}dBFS)")
     silencios = silence.detect_silence(
         audio,
         min_silence_len=max(200, int(min_silencio_ms)),
@@ -96,20 +197,25 @@ def remover_silencios(
     }
 
 
-def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_db: int = -40) -> list:
+def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_db: int = None) -> list:
     """
     Detecta os períodos de silêncio no vídeo.
 
     Parâmetros:
         caminho_video: caminho para o arquivo de vídeo
         min_silencio_ms: duração mínima em ms para considerar um silêncio (padrão: 500ms)
-        threshold_db: volume abaixo do qual considera silêncio (padrão: -40dB)
+        threshold_db: volume abaixo do qual considera silêncio
+                      (None = adaptativo, baseado no volume médio do áudio)
 
     Retorna:
         lista de tuplas (inicio_ms, fim_ms) com os períodos de silêncio
     """
     print("🔇 Analisando silêncios no áudio...")
     audio = AudioSegment.from_file(caminho_video)
+
+    if threshold_db is None:
+        threshold_db = calcular_threshold_adaptativo(audio)
+        print(f"🔉 Threshold adaptativo: {threshold_db}dB")
 
     periodos_silencio = silence.detect_silence(
         audio,
@@ -135,11 +241,23 @@ def ajustar_cortes_com_silencio(segmentos: list, silencias: list, margem_ms: int
         lista de segmentos com pontos de corte ajustados
     """
     def encontrar_silencio_proximo(tempo_ms, silencias, margem_ms):
-        """Encontra o silêncio mais próximo de um timestamp."""
+        """
+        Encontra o silêncio MAIS PRÓXIMO de um timestamp.
+
+        Versão anterior retornava o PRIMEIRO silêncio dentro da margem
+        (ordem da lista), o que podia puxar o corte para o lado errado.
+        Agora compara todos os candidatos e escolhe o de menor distância.
+        """
+        melhor = None
+        menor_distancia = None
         for inicio_s, fim_s in silencias:
             meio_silencio = (inicio_s + fim_s) / 2
-            if abs(meio_silencio - tempo_ms) <= margem_ms:
-                return meio_silencio / 1000  # converte para segundos
+            distancia = abs(meio_silencio - tempo_ms)
+            if distancia <= margem_ms and (menor_distancia is None or distancia < menor_distancia):
+                melhor = meio_silencio
+                menor_distancia = distancia
+        if melhor is not None:
+            return melhor / 1000  # converte para segundos
         return tempo_ms / 1000  # retorna original se não encontrar
 
     segmentos_ajustados = []

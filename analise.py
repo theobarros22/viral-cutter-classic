@@ -47,6 +47,26 @@ def _extrair_audio_wav(caminho_video: str, caminho_wav: str,
     return resultado.returncode == 0 and os.path.exists(caminho_wav)
 
 
+# ── Cache do modelo Whisper ──────────────────────────────────────────────
+# O modelo pesa de 500MB (small) a 3GB (large). Sem cache, cada transcrição
+# recarrega tudo do disco para a GPU/RAM — segundos a minutos desperdiçados.
+# O cache guarda o modelo por (nome, dispositivo) e reutiliza na próxima.
+_cache_modelo_whisper: dict = {}
+
+
+def carregar_modelo_whisper(modelo_nome: str, dispositivo: str):
+    """Carrega o modelo Whisper uma única vez e reutiliza nas próximas chamadas."""
+    chave = f"{modelo_nome}|{dispositivo}"
+    if chave in _cache_modelo_whisper:
+        print(f"🎙️ Modelo Whisper '{modelo_nome}' já em memória (cache).")
+        return _cache_modelo_whisper[chave]
+
+    print(f"🎙️ Carregando modelo Whisper '{modelo_nome}'...")
+    modelo = whisper.load_model(modelo_nome, device=dispositivo)
+    _cache_modelo_whisper[chave] = modelo
+    return modelo
+
+
 def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str = "small") -> dict:
     """
     Transcreve o áudio do vídeo usando Whisper na GPU se disponível.
@@ -62,8 +82,7 @@ def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str =
     else:
         print("💻 GPU não disponível — usando CPU (mais lento)")
 
-    print(f"🎙️ Carregando modelo Whisper '{modelo_nome}'...")
-    modelo = whisper.load_model(modelo_nome, device=dispositivo)
+    modelo = carregar_modelo_whisper(modelo_nome, dispositivo)
 
     # Descobre a duração total do vídeo
     duracao_total = _obter_duracao_segundos(caminho_video)

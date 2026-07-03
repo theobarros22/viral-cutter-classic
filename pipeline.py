@@ -364,6 +364,14 @@ def etapa2_analisar(
     log(f"🤖 Identificando segmentos (nicho: {nicho})...")
     segmentos = segmentar_por_assunto(transcricao, duracao_min, duracao_max, nicho, modo_offline=modo_offline)
 
+    # ── Refinamento de precisão ──────────────────────────────────────────
+    # Os segmentos vêm com tempos de frase (arredondados). Aqui ajustamos
+    # início/fim para os limites reais das palavras (word timestamps do
+    # Whisper), com um pequeno respiro — o corte nunca decapita palavra.
+    from cortes import refinar_limites_com_palavras
+    segmentos = refinar_limites_com_palavras(segmentos, transcricao)
+    log("✂️ Limites de corte refinados com timestamps de palavras.")
+
     _cache["segmentos"] = segmentos
     log(f"✅ {len(segmentos)} segmentos identificados!")
     return segmentos
@@ -992,8 +1000,14 @@ def etapa4_efeitos_virais(
 
         try:
             # ── 1. Transcrição word-level ──────────────────────────────────
+            # carregar_modelo_whisper usa cache: o modelo é carregado uma
+            # única vez e reutilizado em todos os clipes do loop (antes,
+            # recarregava 500MB-3GB do disco A CADA clipe).
             log(f"   [{i}/{total}] 🎙️ Transcrevendo...")
-            modelo_wh = _whisper.load_model(modelo_whisper)
+            import torch as _torch
+            from analise import carregar_modelo_whisper
+            _dispositivo = "cuda" if _torch.cuda.is_available() else "cpu"
+            modelo_wh = carregar_modelo_whisper(modelo_whisper, _dispositivo)
             transcricao = modelo_wh.transcribe(
                 caminho_clip,
                 language=idioma,

@@ -6,7 +6,11 @@ import unittest
 from unittest.mock import patch
 
 from checkpoint import carregar_checkpoint, resultado_valido, salvar_checkpoint
-from cortes import calcular_intervalos_fala
+from cortes import (
+    ajustar_cortes_com_silencio,
+    calcular_intervalos_fala,
+    refinar_limites_com_palavras,
+)
 from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
@@ -45,6 +49,45 @@ class TestCore(unittest.TestCase):
             10000, [(2000, 4000), (7000, 8000)], margem_ms=100
         )
         self.assertEqual(intervalos, [(0, 2100), (3900, 7100), (7900, 10000)])
+
+    def test_refinamento_ajusta_para_limites_de_palavras(self):
+        # Segmento com tempos "de frase" arredondados (10.0-20.0), mas as
+        # palavras reais vão de 10.34 a 19.62 — o corte deve seguir as palavras.
+        transcricao = {"segments": [{"words": [
+            {"start": 10.34, "end": 10.80, "word": "ola"},
+            {"start": 11.00, "end": 19.62, "word": "mundo"},
+        ]}]}
+        refinados = refinar_limites_com_palavras(
+            [{"inicio": 10.0, "fim": 20.0}], transcricao,
+            pad_inicio_s=0.2, pad_fim_s=0.3,
+        )
+        self.assertAlmostEqual(refinados[0]["inicio"], 10.14, places=2)
+        self.assertAlmostEqual(refinados[0]["fim"], 19.92, places=2)
+
+    def test_refinamento_sem_palavras_mantem_original(self):
+        refinados = refinar_limites_com_palavras(
+            [{"inicio": 5.0, "fim": 15.0}], {"segments": []}
+        )
+        self.assertEqual(refinados, [{"inicio": 5.0, "fim": 15.0}])
+
+    def test_refinamento_nunca_gera_inicio_negativo(self):
+        transcricao = {"segments": [{"words": [
+            {"start": 0.05, "end": 0.5, "word": "oi"},
+        ]}]}
+        refinados = refinar_limites_com_palavras(
+            [{"inicio": 0.0, "fim": 1.0}], transcricao, pad_inicio_s=0.2,
+        )
+        self.assertGreaterEqual(refinados[0]["inicio"], 0.0)
+
+    def test_ajuste_escolhe_silencio_mais_proximo_nao_o_primeiro(self):
+        # Dois silêncios na margem: meio em 9000ms (longe) e 10100ms (perto).
+        # O corte em 10000ms deve ir para o mais próximo (10100), não o
+        # primeiro da lista (9000).
+        silencios = [(8800, 9200), (10000, 10200)]
+        ajustados = ajustar_cortes_com_silencio(
+            [{"inicio": 10.0, "fim": 30.0}], silencios, margem_ms=1200
+        )
+        self.assertAlmostEqual(ajustados[0]["inicio"], 10.1, places=2)
 
     def test_nome_vazio_tem_fallback(self):
         self.assertEqual(sanitizar_nome(""), "clipe")
@@ -88,6 +131,14 @@ class TestCore(unittest.TestCase):
                 arquivo.write(b"incompleto")
             self.assertFalse(resultado_valido({"arquivo": caminho}))
 
+    # Resposta simulada da validação FFprobe (v2.3) para testes que usam
+    # arquivos falsos — o ffprobe real reprovaria os bytes de mentira e o
+    # retry do pipeline dobraria as chamadas de enquadramento.
+    _VALIDACAO_OK = {
+        "valid": True, "errors": [], "warnings": [],
+        "duration": 10.0, "width": 608, "height": 1080, "video_codec": "h264",
+    }
+
     def test_processamento_reaproveita_clipe_concluido(self):
         chamadas = {"corte": 0, "enquadramento": 0}
 
@@ -109,7 +160,8 @@ class TestCore(unittest.TestCase):
             "rostos": types.SimpleNamespace(detectar_quem_fala_por_frame=lambda *_a, **_k: []),
         }
 
-        with tempfile.TemporaryDirectory() as pasta, patch.dict(sys.modules, modulos):
+        with tempfile.TemporaryDirectory() as pasta, patch.dict(sys.modules, modulos), \
+                patch("pipeline.validar_midia_ffprobe", return_value=dict(self._VALIDACAO_OK)):
             video = os.path.join(pasta, "video.mp4")
             with open(video, "wb") as arquivo:
                 arquivo.write(b"video")
@@ -158,7 +210,8 @@ class TestCore(unittest.TestCase):
             "rostos": types.SimpleNamespace(detectar_quem_fala_por_frame=detectar_falante),
         }
 
-        with tempfile.TemporaryDirectory() as pasta, patch.dict(sys.modules, modulos):
+        with tempfile.TemporaryDirectory() as pasta, patch.dict(sys.modules, modulos), \
+                patch("pipeline.validar_midia_ffprobe", return_value=dict(self._VALIDACAO_OK)):
             video = os.path.join(pasta, "video.mp4")
             with open(video, "wb") as arquivo:
                 arquivo.write(b"video")

@@ -209,14 +209,15 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
                     f.write(bloco)
                     restante -= len(bloco)
             
-            import whisper
             import torch
-            
+
             dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
-            modelo = whisper.load_model("small", device=dispositivo)
-            
+
             import sys
             sys.path.append(str(PASTA_STUDIO.parent))
+            # Cache central: não recarrega o modelo se já está em memória
+            from analise import carregar_modelo_whisper
+            modelo = carregar_modelo_whisper("small", dispositivo)
             from legendas import extrair_palavras_do_whisper, agrupar_palavras
             
             resultado = modelo.transcribe(

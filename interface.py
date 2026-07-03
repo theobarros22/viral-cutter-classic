@@ -428,11 +428,12 @@ def ao_obter_transcricao(
             idioma = IDIOMAS.get(idioma_label, "pt")
             log(f"🎙️ Transcrevendo com Whisper '{modelo_nome}'...")
 
-            import whisper
             import torch
 
             dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
-            modelo = whisper.load_model(modelo_nome, device=dispositivo)
+            # Cache central: não recarrega o modelo se já está em memória
+            from analise import carregar_modelo_whisper
+            modelo = carregar_modelo_whisper(modelo_nome, dispositivo)
 
             from analise import _extrair_audio_wav, _obter_duracao_segundos
             import tempfile
