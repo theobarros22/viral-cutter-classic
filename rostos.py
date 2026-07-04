@@ -25,6 +25,14 @@ from runtime import pasta_dados
 LOGGER = logging.getLogger("ViralCutter.rostos")
 
 
+def _print_seguro(mensagem) -> None:
+    """Imprime logs sem derrubar o processamento em console Windows CP1252."""
+    try:
+        print(mensagem)
+    except UnicodeEncodeError:
+        print(str(mensagem).encode("ascii", errors="replace").decode("ascii"))
+
+
 def _caminho_recurso(nome: str) -> str:
     """Localiza recursos tanto no código-fonte quanto no executável."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -98,108 +106,111 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
     # Corrige o mp4 antes de abrir com OpenCV
     caminho_original = caminho_video
     caminho_video = _corrigir_mp4(caminho_video)
-
     detector = _inicializar_detector()
     if detector is None:
-        print("⚠️ Detector não disponível.")
+        _print_seguro("⚠️ Detector não disponível.")
         if caminho_video != caminho_original and os.path.exists(caminho_video):
             os.remove(caminho_video)
         return []
 
     cap = cv2.VideoCapture(caminho_video)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    altura  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps     = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    try:
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        altura  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps     = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    # Limita a análise aos primeiros N minutos
-    frame_limite = int(limite_minutos * 60 * fps)
-    frames_analisar = min(total_frames, frame_limite)
+        # Limita a análise aos primeiros N minutos
+        frame_limite = int(limite_minutos * 60 * fps)
+        frames_analisar = min(total_frames, frame_limite)
 
-    # Vai diretamente aos frames de amostra. Antes o programa decodificava
-    # todos os frames intermediários, embora analisasse apenas algumas dezenas.
-    amostras_reais = min(max_amostras, frames_analisar)
-    alvos = np.linspace(0, max(0, frames_analisar - 1), amostras_reais, dtype=int)
-    print(f"🔍 Detectando pessoas nos primeiros {limite_minutos:.0f} min ({amostras_reais} amostras)...")
+        # Vai diretamente aos frames de amostra. Antes o programa decodificava
+        # todos os frames intermediários, embora analisasse apenas algumas dezenas.
+        amostras_reais = min(max_amostras, frames_analisar)
+        alvos = np.linspace(0, max(0, frames_analisar - 1), amostras_reais, dtype=int)
+        _print_seguro(f"🔍 Detectando pessoas nos primeiros {limite_minutos:.0f} min ({amostras_reais} amostras)...")
 
-    # Guarda: lista de (posicao_x, frame_com_rosto_recortado)
-    deteccoes = []
-    for frame_idx in alvos:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-        ret, frame = cap.read()
-        if not ret:
-            continue
-
-        rostos = detectar_rostos_robusto(frame, detector)
-        for rosto in rostos:
-            x_centro = rosto["x"] * largura
-            y_centro = rosto["y"] * altura
-            w_rosto  = rosto["w"] * largura
-            h_rosto  = rosto.get("h", rosto["w"]) * altura
-
-            margem = 0.5
-            x1 = max(0, int(x_centro - w_rosto * (0.5 + margem)))
-            y1 = max(0, int(y_centro - h_rosto * (0.5 + margem)))
-            x2 = min(largura, int(x_centro + w_rosto * (0.5 + margem)))
-            y2 = min(altura, int(y_centro + h_rosto * (0.5 + margem)))
-
-            recorte = frame[y1:y2, x1:x2]
-            if recorte.size > 0:
-                deteccoes.append({
-                    "posicao_x": rosto["x"],
-                    "posicao_y": rosto["y"],
-                    "recorte": recorte,
-                    "frame_idx": int(frame_idx),
-                })
-
-    # Alguns MP4/MOV grandes não permitem busca aleatória confiável pelo OpenCV.
-    # Se nenhuma amostra funcionou, faz uma varredura curta e sequencial.
-    if not deteccoes:
-        print("   🔄 Busca aleatória sem resultado; tentando varredura sequencial...")
-        cap.release()
-        cap = cv2.VideoCapture(caminho_video)
-        limite_sequencial = min(total_frames, int(fps * 120))
-        passo_sequencial = max(1, int(fps * 2))
-        frame_idx = 0
-        while cap.isOpened() and frame_idx < limite_sequencial:
-            ret = cap.grab()
+        # Guarda: lista de (posicao_x, frame_com_rosto_recortado)
+        deteccoes = []
+        for frame_idx in alvos:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+            ret, frame = cap.read()
             if not ret:
-                break
-            if frame_idx % passo_sequencial == 0:
-                ret, frame = cap.retrieve()
-                if ret:
-                    for rosto in detectar_rostos_robusto(frame, detector):
-                        x_centro = rosto["x"] * largura
-                        y_centro = rosto["y"] * altura
-                        w_rosto = rosto["w"] * largura
-                        h_rosto = rosto.get("h", rosto["w"]) * altura
-                        x1 = max(0, int(x_centro - w_rosto))
-                        y1 = max(0, int(y_centro - h_rosto))
-                        x2 = min(largura, int(x_centro + w_rosto))
-                        y2 = min(altura, int(y_centro + h_rosto))
-                        recorte = frame[y1:y2, x1:x2]
-                        if recorte.size > 0:
-                            deteccoes.append({
-                                "posicao_x": rosto["x"],
-                                "posicao_y": rosto["y"],
-                                "recorte": recorte,
-                                "frame_idx": frame_idx,
-                            })
-            frame_idx += 1
+                continue
 
-    cap.release()
-    _fechar_detector(detector)
-    if caminho_video != caminho_original and os.path.exists(caminho_video):
-        os.remove(caminho_video)
+            rostos = detectar_rostos_robusto(frame, detector)
+            for rosto in rostos:
+                x_centro = rosto["x"] * largura
+                y_centro = rosto["y"] * altura
+                w_rosto  = rosto["w"] * largura
+                h_rosto  = rosto.get("h", rosto["w"]) * altura
+
+                margem = 0.5
+                x1 = max(0, int(x_centro - w_rosto * (0.5 + margem)))
+                y1 = max(0, int(y_centro - h_rosto * (0.5 + margem)))
+                x2 = min(largura, int(x_centro + w_rosto * (0.5 + margem)))
+                y2 = min(altura, int(y_centro + h_rosto * (0.5 + margem)))
+
+                recorte = frame[y1:y2, x1:x2]
+                if recorte.size > 0:
+                    deteccoes.append({
+                        "posicao_x": rosto["x"],
+                        "posicao_y": rosto["y"],
+                        "recorte": recorte,
+                        "frame_idx": int(frame_idx),
+                    })
+
+        # Alguns MP4/MOV grandes não permitem busca aleatória confiável pelo OpenCV.
+        # Se nenhuma amostra funcionou, faz uma varredura curta e sequencial.
+        if not deteccoes:
+            _print_seguro("   🔄 Busca aleatória sem resultado; tentando varredura sequencial...")
+            cap.release()
+            cap = cv2.VideoCapture(caminho_video)
+            limite_sequencial = min(total_frames, int(fps * 120))
+            passo_sequencial = max(1, int(fps * 2))
+            frame_idx = 0
+            while cap.isOpened() and frame_idx < limite_sequencial:
+                ret = cap.grab()
+                if not ret:
+                    break
+                if frame_idx % passo_sequencial == 0:
+                    ret, frame = cap.retrieve()
+                    if ret:
+                        for rosto in detectar_rostos_robusto(frame, detector):
+                            x_centro = rosto["x"] * largura
+                            y_centro = rosto["y"] * altura
+                            w_rosto = rosto["w"] * largura
+                            h_rosto = rosto.get("h", rosto["w"]) * altura
+                            x1 = max(0, int(x_centro - w_rosto))
+                            y1 = max(0, int(y_centro - h_rosto))
+                            x2 = min(largura, int(x_centro + w_rosto))
+                            y2 = min(altura, int(y_centro + h_rosto))
+                            recorte = frame[y1:y2, x1:x2]
+                            if recorte.size > 0:
+                                deteccoes.append({
+                                    "posicao_x": rosto["x"],
+                                    "posicao_y": rosto["y"],
+                                    "recorte": recorte,
+                                    "frame_idx": frame_idx,
+                                })
+                frame_idx += 1
+    finally:
+        cap.release()
+        _fechar_detector(detector)
+        if caminho_video != caminho_original and os.path.exists(caminho_video):
+            try:
+                os.remove(caminho_video)
+            except OSError:
+                pass
 
     if not deteccoes:
-        print("⚠️ Nenhum rosto detectado.")
+        _print_seguro("⚠️ Nenhum rosto detectado.")
         return []
 
     # Agrupa rostos por posição X (esquerda vs direita)
     pessoas = _agrupar_por_posicao(deteccoes)
 
-    print(f"✅ {len(pessoas)} pessoa(s) identificada(s) no vídeo.")
+    _print_seguro(f"✅ {len(pessoas)} pessoa(s) identificada(s) no vídeo.")
     return pessoas
 
 
@@ -295,80 +306,76 @@ def detectar_quem_fala_por_frame(
     Frames sem fala detectada retornam None.
     """
     detector = _inicializar_detector()
-
     cap = cv2.VideoCapture(caminho_video)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    fps = fps if fps and fps > 0 else 30.0
-    largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    altura  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    try:
+        if not cap.isOpened():
+            raise RuntimeError("Nao foi possivel abrir o video para detectar o falante.")
 
-    print(f"🎤 Detectando quem fala em {total_frames} frames...")
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = fps if fps and fps > 0 else 30.0
+        largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        altura = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Carrega análise de energia do áudio
-    energia_audio = (
-        _analisar_energia_audio(caminho_video, fps, total_frames)
-        if analisar_audio else [1.0] * total_frames
-    )
+        _print_seguro(f"🎤 Detectando quem fala em {total_frames} frames...")
 
-    resultado = [None] * total_frames
-    frame_anterior = None
-    ultimo_falante_x = None
+        energia_audio = (
+            _analisar_energia_audio(caminho_video, fps, total_frames)
+            if analisar_audio else [1.0] * total_frames
+        )
 
-    intervalos = intervalos_frames or [(0, total_frames)]
-    for inicio, fim in intervalos:
-        inicio = max(0, int(inicio))
-        fim = min(total_frames, int(fim))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, inicio)
+        resultado = [None] * total_frames
+        frame_anterior = None
+        ultimo_falante_x = None
 
-        for frame_idx in range(inicio, fim):
-            ret = cap.grab()
-            if not ret:
-                break
+        intervalos = intervalos_frames or [(0, total_frames)]
+        for inicio, fim in intervalos:
+            inicio = max(0, int(inicio))
+            fim = min(total_frames, int(fim))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, inicio)
 
-            if (frame_idx - inicio) % intervalo_frames != 0:
-                continue
+            for frame_idx in range(inicio, fim):
+                ret = cap.grab()
+                if not ret:
+                    break
 
-            ret, frame = cap.retrieve()
-            if not ret:
-                continue
-            rostos = detectar_rostos_robusto(frame, detector)
+                if (frame_idx - inicio) % intervalo_frames != 0:
+                    continue
 
-            if len(rostos) == 0:
-                # Sem rosto → mantém último falante
-                resultado[frame_idx] = ultimo_falante_x
+                ret, frame = cap.retrieve()
+                if not ret:
+                    continue
+                rostos = detectar_rostos_robusto(frame, detector)
 
-            elif len(rostos) == 1:
-                # Só 1 pessoa → é ela falando
-                ultimo_falante_x = rostos[0]["x"]
-                resultado[frame_idx] = ultimo_falante_x
-
-            else:
-                # 2+ pessoas → detecta quem está com a boca mais aberta
-                # (movimento labial = variação na parte inferior do rosto)
-                melhor_falante = _detectar_movimento_labial(
-                    frame, frame_anterior, rostos, largura, altura
-                )
-
-                # Combina com energia do áudio
-                energia = energia_audio[frame_idx] if frame_idx < len(energia_audio) else 0.5
-
-                if melhor_falante is not None and energia > 0.3:
-                    ultimo_falante_x = melhor_falante
-                    resultado[frame_idx] = melhor_falante
-                else:
+                if len(rostos) == 0:
                     resultado[frame_idx] = ultimo_falante_x
+                elif len(rostos) == 1:
+                    ultimo_falante_x = rostos[0]["x"]
+                    resultado[frame_idx] = ultimo_falante_x
+                else:
+                    melhor_falante = _detectar_movimento_labial(
+                        frame, frame_anterior, rostos, largura, altura
+                    )
+                    energia = (
+                        energia_audio[frame_idx]
+                        if frame_idx < len(energia_audio)
+                        else 0.5
+                    )
+                    if melhor_falante is not None and energia > 0.3:
+                        ultimo_falante_x = melhor_falante
+                        resultado[frame_idx] = melhor_falante
+                    else:
+                        resultado[frame_idx] = ultimo_falante_x
 
-            # Guarda apenas o último frame realmente analisado.
-            frame_anterior = frame
-
-    cap.release()
-    _fechar_detector(detector)
+                frame_anterior = frame
+    finally:
+        cap.release()
+        _fechar_detector(detector)
 
     # Interpola frames não analisados
     resultado = _interpolar_falante(resultado, total_frames)
 
-    print(f"✅ Detecção de fala concluída!")
+    _print_seguro(f"✅ Detecção de fala concluída!")
     return resultado
 
 
@@ -497,7 +504,7 @@ def _inicializar_detector():
         modelo_path = _caminho_modelo_facial()
         if not os.path.exists(modelo_path):
             import urllib.request
-            print("Baixando modelo de deteccao facial...")
+            _print_seguro("Baixando modelo de deteccao facial...")
             url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
             urllib.request.urlretrieve(url, modelo_path)
 
@@ -510,7 +517,7 @@ def _inicializar_detector():
         )
         obj = mp_vision.FaceDetector.create_from_options(options)
         mediapipe_detector = {"tipo": "novo", "obj": obj}
-        print("Detector MediaPipe Tasks carregado.")
+        _print_seguro("Detector MediaPipe Tasks carregado.")
     except Exception as erro:
         erros.append(f"MediaPipe Tasks: {erro}")
         try:
@@ -520,7 +527,7 @@ def _inicializar_detector():
                 model_selection=1, min_detection_confidence=0.35
             )
             mediapipe_detector = {"tipo": "antigo", "obj": obj}
-            print("Detector MediaPipe full-range carregado.")
+            _print_seguro("Detector MediaPipe full-range carregado.")
         except Exception as erro_antigo:
             erros.append(f"MediaPipe Solutions: {erro_antigo}")
 
@@ -538,7 +545,7 @@ def _inicializar_detector():
     if mediapipe_detector is None and haar is None:
         mensagem = " | ".join(erros) or "nenhum detector disponível"
         LOGGER.error("Falha ao inicializar detectores: %s", mensagem)
-        print(f"   ⚠️ Falha ao carregar detector facial: {mensagem}")
+        _print_seguro(f"   ⚠️ Falha ao carregar detector facial: {mensagem}")
         return None
 
     if erros:

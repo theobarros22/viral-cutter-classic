@@ -19,7 +19,10 @@ import json
 import shutil
 import subprocess
 import threading
-from runtime import pasta_dados
+from runtime import configurar_console_utf8, pasta_dados
+
+
+configurar_console_utf8()
 
 
 # Cache entre etapas

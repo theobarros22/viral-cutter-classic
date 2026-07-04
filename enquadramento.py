@@ -37,7 +37,9 @@ from ffmpeg_utils import argumentos_encoder
 # ── Configurações ─────────────────────────────────────────────────────────────
 
 RESOLUCOES = {
-    "720p":  (405,  720),
+    # H.264/yuv420p exige largura e altura pares. 405x720 é 9:16 exato,
+    # mas quebra o libx264; 406x720 mantém o formato visual e codifica.
+    "720p":  (406,  720),
     "1080p": (1080, 1920),
     "4k":    (2160, 3840),
 }

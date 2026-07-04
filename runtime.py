@@ -13,6 +13,18 @@ NOME_APP = "ViralCutter"
 _MUTEX = None
 
 
+def configurar_console_utf8() -> None:
+    """Evita falha de Unicode em consoles Windows configurados como CP1252."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def pasta_base() -> str:
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
