@@ -24,6 +24,11 @@ from runtime import pasta_dados
 
 LOGGER = logging.getLogger("ViralCutter.rostos")
 
+# Abaixo disso, a diferença de movimento entre os rostos é ruído de
+# compressão/iluminação, não fala real — comum quando um microfone de mesa
+# cobre a boca e a região analisada mal muda de um frame pro outro.
+LIMIAR_MOVIMENTO_LABIAL = 4.0
+
 
 def _print_seguro(mensagem) -> None:
     """Imprime logs sem derrubar o processamento em console Windows CP1252."""
@@ -387,12 +392,17 @@ def _detectar_movimento_labial(
     Detecta qual rosto tem mais movimento na região da boca.
     Usa diferença entre frames consecutivos na parte inferior do rosto.
     Retorna a posição X do rosto com mais movimento (quem está falando).
+
+    Se nenhum rosto atinge LIMIAR_MOVIMENTO_LABIAL, o resultado é ambíguo
+    (ex.: microfone cobrindo a boca) — retorna None em vez de cair sempre
+    no primeiro rosto da lista, o que enviesaria sistematicamente a detecção
+    de fala para o mesmo lado.
     """
     if frame_anterior is None or not rostos:
         return rostos[0]["x"] if rostos else None
 
     max_movimento = 0
-    falante_x = rostos[0]["x"]
+    falante_x = None
 
     for rosto in rostos:
         # Região da boca: 60-90% da altura do rosto
@@ -426,6 +436,9 @@ def _detectar_movimento_labial(
         if movimento > max_movimento:
             max_movimento = movimento
             falante_x = rosto["x"]
+
+    if max_movimento < LIMIAR_MOVIMENTO_LABIAL:
+        return None
 
     return falante_x
 
@@ -577,53 +590,77 @@ def detectar_rostos_robusto(frame, detector) -> list:
     Detecção robusta para PLANO ABERTO (rostos pequenos).
 
     O modelo do MediaPipe é de curto alcance — em plano aberto de podcast
-    os rostos ficam pequenos demais e ele falha. Esta função tenta 3 vezes:
+    os rostos ficam pequenos demais e ele falha. Esta função tenta 3 vezes
+    usando SÓ o MediaPipe (nunca o Haar aqui — ver motivo abaixo):
 
     1. Frame original (rápido, funciona em close)
     2. Frame ampliado 2x (rostos pequenos ficam detectáveis)
-    3. Metades esquerda/direita ampliadas (pessoas nas bordas do quadro)
+    3. Metades esquerda/direita ampliadas 3x em largura E altura
+       (pessoas coladas nas bordas, longe do centro)
+
+    Só se as 3 tentativas falharem, cai pro Haar cascade (OpenCV) como
+    último recurso. Antes o Haar rodava DENTRO de cada tentativa (embutido
+    em _detectar_rostos_frame via o detector "combinado") e disparava já
+    na tentativa 1 sempre que o MediaPipe não achava nada no frame
+    original — o que é o caso comum em plano aberto. Isso impedia as
+    tentativas 2/3 de rodar (a função já tinha retornado) e o resultado
+    final vinha do Haar, que confunde padrões repetitivos do cenário
+    (parede texturizada, estante com estatueta em forma de rosto) com
+    rostos reais — com bastante confiança e de forma consistente, virando
+    um "lado" inteiro do split screen mirando em decoração.
 
     Retorna lista no mesmo formato de _detectar_rostos_frame
     (coordenadas normalizadas 0-1 relativas ao frame ORIGINAL).
     """
-    # Tentativa 1 — frame original
-    rostos = _detectar_rostos_frame(frame, detector)
+    mp_detector = detector.get("mediapipe") if isinstance(detector, dict) else detector
+
+    # Tentativa 1 — frame original, MediaPipe puro
+    rostos = _detectar_rostos_frame(frame, mp_detector) if mp_detector else []
     if rostos:
         return rostos
 
     h, w = frame.shape[:2]
 
     # Tentativa 2 — amplia o frame 2x (coordenadas normalizadas não mudam)
-    try:
-        ampliado = cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
-        rostos = _detectar_rostos_frame(ampliado, detector)
-        if rostos:
-            return rostos
-    except Exception:
-        pass
+    if mp_detector:
+        try:
+            ampliado = cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+            rostos = _detectar_rostos_frame(ampliado, mp_detector)
+            if rostos:
+                return rostos
+        except Exception:
+            pass
 
-    # Tentativa 3 — metades esquerda e direita, cada uma ampliada
-    # (pega pessoas coladas nas bordas, longe do centro)
-    try:
-        resultado = []
-        metades = [
-            (0.0, frame[:, : w // 2]),       # metade esquerda
-            (0.5, frame[:, w // 2 :]),       # metade direita
-        ]
-        for offset_x, metade in metades:
-            metade_grande = cv2.resize(metade, (w, h), interpolation=cv2.INTER_LINEAR)
-            detectados = _detectar_rostos_frame(metade_grande, detector)
-            for r in detectados:
-                # Converte coordenadas da metade de volta para o frame inteiro
-                resultado.append({
-                    "x": offset_x + r["x"] * 0.5,
-                    "y": r["y"],
-                    "w": r["w"] * 0.5,
-                    "h": r["h"],
-                })
-        return resultado
-    except Exception:
-        return []
+        # Tentativa 3 — metades esquerda e direita, ampliadas 3x em largura
+        # E altura (zoom só na largura não aumenta rostos pequenos o
+        # suficiente; testado empiricamente em plano aberto multicâmera).
+        try:
+            resultado = []
+            metades = [
+                (0.0, frame[:, : w // 2]),       # metade esquerda
+                (0.5, frame[:, w // 2 :]),       # metade direita
+            ]
+            for offset_x, metade in metades:
+                mh, mw = metade.shape[:2]
+                metade_grande = cv2.resize(metade, (mw * 3, mh * 3), interpolation=cv2.INTER_LINEAR)
+                detectados = _detectar_rostos_frame(metade_grande, mp_detector)
+                for r in detectados:
+                    # Converte coordenadas da metade de volta para o frame inteiro
+                    resultado.append({
+                        "x": offset_x + r["x"] * 0.5,
+                        "y": r["y"],
+                        "w": r["w"] * 0.5,
+                        "h": r["h"],
+                    })
+            if resultado:
+                return resultado
+        except Exception:
+            pass
+
+    # Último recurso: Haar cascade (OpenCV). Mais ruidoso que o MediaPipe,
+    # mas melhor que nada quando as 3 tentativas de MediaPipe falham.
+    haar = detector.get("haar") if isinstance(detector, dict) else None
+    return _detectar_rostos_haar(frame, haar) if haar is not None else []
 
 
 def _detectar_rostos_frame(frame, detector) -> list:

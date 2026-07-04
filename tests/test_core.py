@@ -12,16 +12,24 @@ from cortes import (
     refinar_limites_com_palavras,
     validar_hook,
 )
-from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop, _gerar_plano
+from enquadramento import (
+    _agrupar_posicoes_cena,
+    _calcular_x_crop,
+    _filtrar_rostos_na_zona_de_cabeca,
+    _gerar_plano,
+)
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
 from rostos import (
     _caminho_modelo_facial,
+    _detectar_movimento_labial,
     _fechar_detector,
     _inicializar_detector,
     _limpar_deteccoes,
     detectar_pessoas_no_video,
+    detectar_rostos_robusto,
 )
+import numpy as np
 class TestCore(unittest.TestCase):
     def test_modelo_facial_tem_caminho_persistente(self):
         self.assertTrue(_caminho_modelo_facial().endswith("face_detector.tflite"))
@@ -44,6 +52,58 @@ class TestCore(unittest.TestCase):
 
     def test_intervalos_sobrepostos_sao_fundidos(self):
         self.assertEqual(_fundir_intervalos([(10, 20), (15, 30), (40, 50)]), [(10, 30), (40, 50)])
+
+    def test_zona_cabeca_mata_tv_e_estatua_mantem_pessoas(self):
+        # Cenário real do Papo Reto: pessoas em Y~0.43/0.57, TV em Y=0.13,
+        # estátua em Y=0.25, objetos na mesa em Y=0.79-0.90. Só as duas
+        # pessoas devem sobreviver ao filtro de zona.
+        rostos = [
+            {"x": 0.10, "y": 0.43, "w": 0.05},  # pessoa esquerda
+            {"x": 0.94, "y": 0.57, "w": 0.07},  # pessoa direita
+            {"x": 0.51, "y": 0.13, "w": 0.10},  # TV (grande mas alta)
+            {"x": 0.33, "y": 0.25, "w": 0.07},  # estátua na estante
+            {"x": 0.50, "y": 0.90, "w": 0.02},  # objeto na mesa
+        ]
+        xs, ys = _filtrar_rostos_na_zona_de_cabeca(rostos)
+        self.assertEqual(sorted(round(x, 2) for x in xs), [0.10, 0.94])
+        grupo = _agrupar_posicoes_cena(xs, ys)
+        self.assertEqual(grupo["n_pessoas"], 2)
+        self.assertAlmostEqual(grupo["lado_b"], 0.94, delta=0.02)
+
+    def test_zona_cabeca_fallback_quando_ninguem_na_zona(self):
+        # Se nenhum rosto está na zona (enquadramento atípico), não descarta
+        # tudo — devolve todos como fallback.
+        rostos = [
+            {"x": 0.30, "y": 0.10, "w": 0.05},
+            {"x": 0.70, "y": 0.12, "w": 0.05},
+        ]
+        xs, ys = _filtrar_rostos_na_zona_de_cabeca(rostos)
+        self.assertEqual(len(xs), 2)
+
+    def test_movimento_labial_ambiguo_retorna_none(self):
+        # Dois rostos com boca ocluída (mic de mesa): frames quase idênticos,
+        # sem movimento real. Antes caía sempre em rostos[0]["x"] — viés
+        # sistemático para o mesmo lado. Agora deve retornar None.
+        frame_anterior = np.full((200, 200, 3), 100, dtype=np.uint8)
+        frame_atual = frame_anterior.copy()
+        rostos = [
+            {"x": 0.2, "y": 0.4, "w": 0.15, "h": 0.15},
+            {"x": 0.8, "y": 0.4, "w": 0.15, "h": 0.15},
+        ]
+        resultado = _detectar_movimento_labial(frame_atual, frame_anterior, rostos, 200, 200)
+        self.assertIsNone(resultado)
+
+    def test_movimento_labial_detecta_lado_correto(self):
+        frame_anterior = np.full((200, 200, 3), 100, dtype=np.uint8)
+        frame_atual = frame_anterior.copy()
+        # Boca do rosto da direita (x=0.8) muda bastante — é quem fala.
+        frame_atual[80:140, 140:180] = 220
+        rostos = [
+            {"x": 0.2, "y": 0.4, "w": 0.15, "h": 0.15},
+            {"x": 0.8, "y": 0.4, "w": 0.15, "h": 0.15},
+        ]
+        resultado = _detectar_movimento_labial(frame_atual, frame_anterior, rostos, 200, 200)
+        self.assertEqual(resultado, 0.8)
 
     def test_silencios_viram_intervalos_de_fala_com_respiro(self):
         intervalos = calcular_intervalos_fala(
@@ -292,6 +352,40 @@ class TestCore(unittest.TestCase):
         self.assertEqual(parametros["intervalo"], 30)
         self.assertFalse(parametros["audio"])
         self.assertEqual(parametros["perfil"], "rapido")
+
+    def test_robusto_nao_cai_no_haar_se_mediapipe_acha_na_tentativa_3(self):
+        # Bug real (Papo Reto, plano aberto): MediaPipe falhava no frame
+        # original, e o Haar embutido no detector "combinado" disparava já
+        # na tentativa 1 antes de tentar o zoom 2x/3x — o Haar então
+        # "achava" rosto numa estatueta do cenário. As 3 tentativas de
+        # MediaPipe devem esgotar ANTES de qualquer chamada ao Haar.
+        detector = {"tipo": "combinado", "mediapipe": {"tipo": "novo"}, "haar": object()}
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+
+        # tentativa 1 (original) e 2 (2x) vazias; tentativa 3 varre as duas
+        # metades e só acha rosto na esquerda — mesmo assim não deve cair
+        # no Haar, já que a tentativa 3 inteira roda antes dessa decisão.
+        respostas = [[], [], [{"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.1}], []]
+        with patch("rostos._detectar_rostos_frame", side_effect=respostas) as mock_mp, \
+                patch("rostos._detectar_rostos_haar") as mock_haar:
+            rostos = detectar_rostos_robusto(frame, detector)
+
+        self.assertEqual(mock_mp.call_count, 4)  # original, 2x, metade-esq, metade-dir
+        mock_haar.assert_not_called()
+        self.assertEqual(len(rostos), 1)
+        self.assertAlmostEqual(rostos[0]["x"], 0.1, delta=0.001)
+
+    def test_robusto_cai_no_haar_so_apos_mediapipe_esgotar(self):
+        detector = {"tipo": "combinado", "mediapipe": {"tipo": "novo"}, "haar": object()}
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+
+        with patch("rostos._detectar_rostos_frame", return_value=[]) as mock_mp, \
+                patch("rostos._detectar_rostos_haar", return_value=[{"x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1}]) as mock_haar:
+            rostos = detectar_rostos_robusto(frame, detector)
+
+        self.assertEqual(mock_mp.call_count, 4)  # original, 2x, metade-esq, metade-dir
+        mock_haar.assert_called_once()
+        self.assertEqual(len(rostos), 1)
 
 if __name__ == "__main__":
     unittest.main()

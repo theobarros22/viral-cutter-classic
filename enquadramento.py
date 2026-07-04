@@ -74,9 +74,28 @@ PASSO_DETECCAO_CENA = 2
 # falsos positivos como rostos na TV do cenário, estátuas e manequins.
 MIN_TAMANHO_ROSTO = 0.018
 
+# Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
+# Falsos positivos do cenário caem fora dela: TV/quadros na parede e
+# estátuas na estante ficam ALTOS (Y < 0.30); objetos na mesa em primeiro
+# plano ficam BAIXOS (Y > 0.72). Diagnóstico real (Papo Reto): pessoas em
+# Y=0.43 e Y=0.57; TV em Y=0.13, estátua em Y=0.25, objetos em Y=0.79-0.90.
+# Filtro com fallback: se uma cena não tem NENHUM rosto nesta zona, ele é
+# ignorado (não descarta a cena inteira).
+ZONA_ROSTO_Y_MIN = 0.30
+ZONA_ROSTO_Y_MAX = 0.72
+
 # Zoom do split screen: fração da ALTURA original que cada painel mostra.
 # 1.0 = comportamento antigo (plano aberto espremido, pessoas minúsculas).
-# 0.62 = fecha na pessoa, estilo podcast profissional.
+#
+# META: ~0.35-0.45 (fecha na pessoa, centraliza mesmo com gente na borda
+# do quadro — em 0.62 o crop de quem está em x~0.87 bate no limite do
+# frame e a pessoa fica descentralizada no painel).
+# BLOQUEIO (testado na rodada 10, 04/07/2026): zoom fechado só funciona
+# com mira PRECISA. Hoje a posição do "lado" vem da mediana de rostos
+# detectados por cena, que ainda mistura decoração (busto na estante) e
+# pontos entre as pessoas — com janela estreita, errar 10% de X corta o
+# rosto fora do painel. Fechar o zoom SÓ depois de mirar por quem-fala
+# (decoração nunca fala; é o único sinal 100% confiável).
 ZOOM_SPLIT = 0.62
 
 # Posição vertical do rosto dentro do painel do split (0.42 = rosto fica
@@ -109,7 +128,13 @@ def aplicar_enquadramento(
     # ── Passo 1: Detecta os cortes de cena dentro do clipe ────────────────
     print("   🎞️ Detectando cortes de cena...")
     passo_cena = 4 if perfil == "rapido" else (1 if perfil == "qualidade" else 2)
-    amostras_cena = 3 if perfil == "rapido" else (8 if perfil == "qualidade" else 6)
+    # 25/30: medido no Papo Reto que em plano aberto multicâmera o
+    # MediaPipe só acha a pessoa mais distante/de perfil em ~16% dos
+    # frames individuais (mic e ângulo atrapalham). Com 6 amostras a
+    # chance de nunca pegá-la numa cena era ~34%; com 25 cai a ~1%. Custo
+    # extra é pequeno (poucos ms de MediaPipe por amostra) e a mediana
+    # dos clusters fica mais estável entre execuções.
+    amostras_cena = 3 if perfil == "rapido" else (30 if perfil == "qualidade" else 25)
     cenas = _detectar_cenas_pyscene(caminho_entrada)
     if cenas is not None:
         print(f"   📊 {len(cenas)} cena(s) [PySceneDetect]")
@@ -388,8 +413,7 @@ def _analisar_rostos_por_cena(
     cap = cv2.VideoCapture(caminho_video)
 
     for cena in cenas:
-        posicoes_x = []
-        posicoes_y = []
+        rostos_cena = []
 
         if detector is not None:
             n_frames_cena = cena["frame_fim"] - cena["frame_ini"]
@@ -410,8 +434,9 @@ def _analisar_rostos_por_cena(
                     # manequins na estante — falsos positivos clássicos.
                     if r.get("w", 0) < MIN_TAMANHO_ROSTO:
                         continue
-                    posicoes_x.append(r["x"])
-                    posicoes_y.append(r["y"])
+                    rostos_cena.append(r)
+
+        posicoes_x, posicoes_y = _filtrar_rostos_na_zona_de_cabeca(rostos_cena)
 
         # Agrupa as posições encontradas NESTA cena
         cena.update(_agrupar_posicoes_cena(posicoes_x, posicoes_y))
@@ -421,6 +446,25 @@ def _analisar_rostos_por_cena(
         _fechar_detector(detector)
 
     return cenas
+
+
+def _filtrar_rostos_na_zona_de_cabeca(rostos: list) -> tuple:
+    """
+    Separa posições X e Y de rostos, priorizando os que estão na zona
+    vertical de cabeça de quem está sentado (ZONA_ROSTO_Y_MIN..MAX).
+
+    Falsos positivos do cenário caem fora: TV/quadros/estátuas ficam altos
+    (Y baixo), objetos na mesa em primeiro plano ficam baixos (Y alto).
+
+    Fallback: se NENHUM rosto está na zona, devolve todos — melhor um crop
+    impreciso do que uma cena tratada como B-roll sem gente.
+    """
+    na_zona = [
+        r for r in rostos
+        if ZONA_ROSTO_Y_MIN <= r["y"] <= ZONA_ROSTO_Y_MAX
+    ]
+    usar = na_zona if na_zona else rostos
+    return [r["x"] for r in usar], [r["y"] for r in usar]
 
 
 def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:

@@ -164,4 +164,71 @@ problema é de fundação — pare de remendar e reconstrua o alicerce.
 
 ---
 
+## 10. ATUALIZAÇÃO — A saga do SPLIT (04/07/2026, rodadas 3-10)
+
+Sessão longa de diagnóstico-correção-medição no clipe 5 do PMERJ
+("Bandidos juraram nos matar"). Cada rodada re-renderizou só esse clipe
+(runner headless no scratchpad, saída em `D:\FUI_BALEADO...\rodadaN\`).
+
+### O sintoma inicial
+Rodada 3 (6/6 FFprobe OK) parecia vitória, mas varredura objetiva dos
+MP4s (script detecta a linha divisória do split na costura dos painéis)
+mostrou SPLIT em 0% dos frames em 5 clipes — num podcast onde os dois
+falam o tempo todo (confirmado pelo Theo).
+
+### Bugs encontrados e corrigidos (em ordem de descoberta)
+
+| # | Bug | Arquivo | Fix |
+|---|---|---|---|
+| 11 | Viés do movimento labial: com boca ocluída por mic de mesa, `_detectar_movimento_labial` SEMPRE retornava `rostos[0]` (mesmo lado) — SOLO travava para sempre | `rostos.py` | `LIMIAR_MOVIMENTO_LABIAL = 4.0`; abaixo disso retorna `None` (ambíguo de verdade) |
+| 12 | Retorno SOLO→SPLIT por timeout não zerava contadores de fala exclusiva — split durava só 1.5s e voltava pro SOLO | `enquadramento.py` `_gerar_plano` | zera `contagem_fala_exclusiva_a/b` no retorno por timeout |
+| 13 | Clustering de posições por cena: 1 falso positivo central virava "lado B" | `enquadramento.py` `_agrupar_posicoes_cena` | clusters por vizinhança (salto >0.15); com 3+, mantém os 2 mais frequentes |
+| 14 | **O estrutural:** o detector "combinado" embutia fallback Haar DENTRO de cada tentativa do MediaPipe. Em plano aberto o MediaPipe falha no frame original → Haar disparava na tentativa 1 e "achava" 7 rostos (parede, estante, estátuas) → as tentativas 2/3 (zoom 2x, metades) nunca rodavam | `rostos.py` `detectar_rostos_robusto` | 3 tentativas usam SÓ MediaPipe; Haar virou último recurso; tentativa 3 agora amplia 3x nas DUAS dimensões (era 2x só na largura) |
+| 15 | Taxa de detecção da pessoa distante/de perfil é ~16% por frame — com 6 amostras/cena, ~34% de chance de nunca achá-la | `enquadramento.py` | `amostras_cena` 6→25 (equilibrado), 8→30 (qualidade) |
+
+Testes: 24 → **46 passando** (novos: limiar labial, clustering com falso
+positivo, zona de cabeça, ordem MediaPipe/Haar).
+
+### Tentativa descartada (registrar para não repetir)
+Filtro por "zona vertical de cabeça" (`ZONA_ROSTO_Y_MIN/MAX = 0.30-0.72`):
+calibrado num plano, quebrou em outro (pessoa real com y=0.25 foi
+filtrada; decoração em y=0.43 passou). Zona Y fixa NÃO é portável entre
+planos de câmera. O código está no repo com fallback inofensivo, mas não
+resolve o problema que motivou.
+
+### Resultado medido (rodada 9, a melhor)
+- SPLIT engajando ~41% na cena de 2 pessoas (era 0%), em janelas
+  irregulares (detecção genuína, não timeout).
+- Painéis do split mostram as duas pessoas REAIS (rodadas 3-7 mostravam
+  estátua da estante e/ou TV do cenário).
+- Frames de validação em `scratchpad/r9_frames/`.
+
+### O que AINDA não está bom (verdade nua)
+1. **Mira imprecisa:** o "lado A=0.47" da rodada 9 é um ponto entre as
+   pessoas (mesa), não a pessoa da esquerda (x real ~0.33). Com zoom
+   0.62 o painel ainda pega a pessoa por sorte da janela larga.
+2. **Zoom fechado bloqueado:** rodada 10 testou `ZOOM_SPLIT=0.35`
+   (matemática perfeita p/ centralizar gente na borda) → painéis
+   perderam os rostos porque a mira está errada. Revertido para 0.62.
+3. **Detecção instável entre execuções:** mesma cena, amostras em frames
+   diferentes → lados diferentes. 25 amostras melhora, não resolve.
+
+### O caminho apontado pelos dados (próxima sessão)
+**Mirar por quem-fala.** A decoração nunca fala. O histograma de posições
+de fala da cena (movimento labial + energia de áudio, já calculado na
+etapa 3) mostra picos exatamente nas pessoas reais. Usar esses picos como
+alvos dos painéis (ou pelo menos para validar/corrigir os clusters de
+rosto) e SÓ ENTÃO fechar o zoom para 0.35-0.45. A pergunta do Theo
+("zoom mais fechado e cada um mais centralizado não fica melhor?") tem
+resposta SIM — é a meta registrada no comentário de `ZOOM_SPLIT`.
+
+### Estado do repo
+- Commit `e364227` (anterior): hook + efeitos + enquadramento v3.
+- Commit desta sessão: bugs 11-15 + testes + calibrações, mensagem
+  "SPLIT engaja de verdade...".
+- Rodadas 3-10 preservadas em `D:\FUI_BALEADO...\rodada3..rodada10\`
+  para comparação visual A/B.
+
+---
+
 *"Nenhuma opinião sem evidência. Nenhuma estratégia sem métrica. Nenhuma ação sem objetivo."*
