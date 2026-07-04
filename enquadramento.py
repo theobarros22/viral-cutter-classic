@@ -58,9 +58,22 @@ LIMIAR_CORTE_CENA = 28.0
 DURACAO_MINIMA_CENA = 0.5  # segundos
 
 # Quantos frames analisar por cena para achar os rostos
-AMOSTRAS_POR_CENA = 6
+AMOSTRAS_POR_CENA = 10
 INTERPOLACAO_EXPORT = cv2.INTER_LINEAR
 PASSO_DETECCAO_CENA = 2
+
+# Rostos menores que isso (largura normalizada) são ignorados — filtra
+# falsos positivos como rostos na TV do cenário, estátuas e manequins.
+MIN_TAMANHO_ROSTO = 0.018
+
+# Zoom do split screen: fração da ALTURA original que cada painel mostra.
+# 1.0 = comportamento antigo (plano aberto espremido, pessoas minúsculas).
+# 0.62 = fecha na pessoa, estilo podcast profissional.
+ZOOM_SPLIT = 0.62
+
+# Posição vertical do rosto dentro do painel do split (0.42 = rosto fica
+# um pouco acima do centro — regra dos terços)
+POSICAO_ROSTO_PAINEL = 0.42
 
 
 def aplicar_enquadramento(
@@ -89,8 +102,12 @@ def aplicar_enquadramento(
     print("   🎞️ Detectando cortes de cena...")
     passo_cena = 4 if perfil == "rapido" else (1 if perfil == "qualidade" else 2)
     amostras_cena = 3 if perfil == "rapido" else (8 if perfil == "qualidade" else 6)
-    cenas = _detectar_cenas(caminho_entrada, fps, passo=passo_cena)
-    print(f"   📊 {len(cenas)} cena(s) encontrada(s) no clipe")
+    cenas = _detectar_cenas_pyscene(caminho_entrada)
+    if cenas is not None:
+        print(f"   📊 {len(cenas)} cena(s) [PySceneDetect]")
+    else:
+        cenas = _detectar_cenas(caminho_entrada, fps, passo=passo_cena)
+        print(f"   📊 {len(cenas)} cena(s) [detector interno — instale scenedetect p/ mais precisão]")
 
     # ── Passo 2: Analisa os rostos DENTRO de cada cena ────────────────────
     print("   🔍 Detectando rostos em cada cena...")
@@ -151,6 +168,18 @@ def aplicar_enquadramento(
     frame_idx = 0
     erro_pipe = False
 
+    # Suavização do crop: dentro da mesma cena o crop desliza suavemente
+    # até o alvo (sem tremer); em corte de cena ele salta seco — exatamente
+    # como um editor humano trabalha.
+    inicios_cena = {c["frame_ini"] for c in cenas}
+    ALPHA_SUAVE = 0.18  # fração da distância percorrida por frame
+    x_suave = None
+    xa_suave = None
+    xb_suave = None
+
+    def _aproximar(atual, alvo):
+        return alvo if atual is None else atual + (alvo - atual) * ALPHA_SUAVE
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -164,27 +193,47 @@ def aplicar_enquadramento(
 
         modo = p["modo"]
 
+        # Corte de cena: crop salta direto para o novo alvo (corte seco)
+        if frame_idx in inicios_cena:
+            x_suave = xa_suave = xb_suave = None
+
         if modo in ("SOLO_A", "SOLO_B", "CENTRAL"):
             x_alvo = p["xa"] if modo != "SOLO_B" else p["xb"]
-            x_crop = _calcular_x_crop(x_alvo, largura, crop_w_916)
+            x_suave = _aproximar(x_suave, x_alvo)
+            x_crop = _calcular_x_crop(x_suave, largura, crop_w_916)
             cortado = frame[0:altura, x_crop:x_crop + crop_w_916]
             frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
 
         else:  # SPLIT
+            # ZOOM na pessoa: cada painel mostra só uma FRAÇÃO da altura
+            # original (ZOOM_SPLIT), centrada no rosto. Antes o painel
+            # espremía o quadro inteiro — pessoas minúsculas com mesa e tudo.
             proporcao_metade = saida_w / metade_h
-            split_crop_w = int(altura * proporcao_metade)
+            crop_h_split = int(altura * ZOOM_SPLIT)
+            split_crop_w = int(crop_h_split * proporcao_metade)
             if split_crop_w > largura:
+                # Vídeo estreito: usa a largura toda e recalcula a altura
                 split_crop_w = largura
+                crop_h_split = int(split_crop_w / proporcao_metade)
             if split_crop_w % 2 != 0:
                 split_crop_w -= 1
+            if crop_h_split % 2 != 0:
+                crop_h_split -= 1
 
-            x_sa = _calcular_x_crop(p["xa"], largura, split_crop_w)
-            crop_a = frame[0:altura, x_sa:x_sa + split_crop_w]
-            topo = cv2.resize(crop_a, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
+            def _painel(x_norm, y_norm):
+                """Recorta a janela do painel centrada no rosto (x, y)."""
+                x_c = _calcular_x_crop(x_norm, largura, split_crop_w)
+                # Rosto fica em POSICAO_ROSTO_PAINEL da altura do painel
+                y_c = int(y_norm * altura - POSICAO_ROSTO_PAINEL * crop_h_split)
+                y_c = max(0, min(altura - crop_h_split, y_c))
+                recorte = frame[y_c:y_c + crop_h_split, x_c:x_c + split_crop_w]
+                return cv2.resize(recorte, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
 
-            x_sb = _calcular_x_crop(p["xb"], largura, split_crop_w)
-            crop_b = frame[0:altura, x_sb:x_sb + split_crop_w]
-            baixo = cv2.resize(crop_b, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
+            # Suaviza a posição de cada painel (sem tremer dentro da cena)
+            xa_suave = _aproximar(xa_suave, p["xa"])
+            xb_suave = _aproximar(xb_suave, p["xb"])
+            topo = _painel(xa_suave, p.get("ya", 0.40))
+            baixo = _painel(xb_suave, p.get("yb", 0.40))
 
             frame_final = np.vstack([topo, baixo])
             frame_final[metade_h - 1:metade_h + 1, :] = [30, 30, 30]
@@ -220,6 +269,36 @@ def aplicar_enquadramento(
 
 
 # ── Detecção de cortes de cena ────────────────────────────────────────────────
+
+def _detectar_cenas_pyscene(caminho_video: str) -> list:
+    """
+    Detecção de cena PROFISSIONAL via PySceneDetect (ContentDetector).
+
+    Por que: a detecção caseira (diferença média de pixels) perdia cortes
+    de câmera em podcasts — gerava "cenas" de 60s+ misturando duas câmeras,
+    e a posição média dos rostos ficava errada para as duas.
+
+    Retorna lista no mesmo formato de _detectar_cenas, ou None se a
+    biblioteca não estiver instalada (aí o chamador usa o fallback caseiro).
+    Instalar com: pip install scenedetect
+    """
+    try:
+        from scenedetect import detect, ContentDetector
+    except ImportError:
+        return None
+
+    try:
+        lista = detect(caminho_video, ContentDetector(threshold=27.0))
+    except Exception as e:
+        print(f"   ⚠️ PySceneDetect falhou ({e}). Usando detector interno.")
+        return None
+
+    cenas = [
+        {"frame_ini": ini.get_frames(), "frame_fim": fim.get_frames()}
+        for ini, fim in lista
+    ]
+    return cenas or None
+
 
 def _detectar_cenas(caminho_video: str, fps: float, passo: int = PASSO_DETECCAO_CENA) -> list:
     """
@@ -302,6 +381,7 @@ def _analisar_rostos_por_cena(
 
     for cena in cenas:
         posicoes_x = []
+        posicoes_y = []
 
         if detector is not None:
             n_frames_cena = cena["frame_fim"] - cena["frame_ini"]
@@ -318,10 +398,15 @@ def _analisar_rostos_por_cena(
                     continue
                 rostos = detectar_rostos_robusto(frame, detector)
                 for r in rostos:
+                    # Filtra rostos minúsculos: TV do cenário, estátuas,
+                    # manequins na estante — falsos positivos clássicos.
+                    if r.get("w", 0) < MIN_TAMANHO_ROSTO:
+                        continue
                     posicoes_x.append(r["x"])
+                    posicoes_y.append(r["y"])
 
         # Agrupa as posições encontradas NESTA cena
-        cena.update(_agrupar_posicoes_cena(posicoes_x))
+        cena.update(_agrupar_posicoes_cena(posicoes_x, posicoes_y))
 
     cap.release()
     if detector is not None:
@@ -330,35 +415,49 @@ def _analisar_rostos_por_cena(
     return cenas
 
 
-def _agrupar_posicoes_cena(posicoes_x: list) -> dict:
+def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
     """
-    Agrupa posições X de rostos de uma cena em 0, 1 ou 2 grupos.
+    Agrupa posições X (e Y) de rostos de uma cena em 0, 1 ou 2 grupos.
 
     - Nenhuma posição  → cena sem pessoas (B-roll): crop central
     - Posições próximas → 1 pessoa (ou grupo): SOLO centralizado nela
     - Posições espalhadas → 2 lados: divide no maior salto entre posições
+
+    O Y médio de cada lado permite ao split screen dar zoom no rosto
+    (antes o Y era descartado e o painel mostrava o plano aberto inteiro).
     """
+    Y_PADRAO = 0.40  # rosto costuma ficar no terço superior em podcast
+
     if not posicoes_x:
-        return {"n_pessoas": 0, "lado_a": 0.5, "lado_b": 0.5}
+        return {"n_pessoas": 0, "lado_a": 0.5, "lado_b": 0.5,
+                "lado_a_y": Y_PADRAO, "lado_b_y": Y_PADRAO}
 
-    xs = sorted(posicoes_x)
+    pares = sorted(zip(
+        posicoes_x,
+        posicoes_y if posicoes_y and len(posicoes_y) == len(posicoes_x)
+        else [Y_PADRAO] * len(posicoes_x),
+    ))
+    xs = [p[0] for p in pares]
+    ys = [p[1] for p in pares]
 
-    # Se todas as posições estão num intervalo estreito, é uma pessoa só
-    if xs[-1] - xs[0] < 0.18:
-        centro = float(np.mean(xs))
-        return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro}
+    # Se todas as posições estão num intervalo estreito, é uma pessoa só.
+    # 0.28 tolera movimentação na cadeira sem virar "duas pessoas".
+    if xs[-1] - xs[0] < 0.28:
+        centro = float(np.median(xs))
+        centro_y = float(np.clip(np.median(ys), 0.15, 0.55))
+        return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
+                "lado_a_y": centro_y, "lado_b_y": centro_y}
 
     # Duas ou mais pessoas: divide no maior salto entre posições vizinhas
     saltos = [(xs[i + 1] - xs[i], i) for i in range(len(xs) - 1)]
     _, idx_divisao = max(saltos)
 
-    grupo_esq = xs[: idx_divisao + 1]
-    grupo_dir = xs[idx_divisao + 1 :]
-
     return {
         "n_pessoas": 2,
-        "lado_a": float(np.mean(grupo_esq)),
-        "lado_b": float(np.mean(grupo_dir)),
+        "lado_a": float(np.median(xs[: idx_divisao + 1])),
+        "lado_b": float(np.median(xs[idx_divisao + 1 :])),
+        "lado_a_y": float(np.clip(np.median(ys[: idx_divisao + 1]), 0.15, 0.55)),
+        "lado_b_y": float(np.clip(np.median(ys[idx_divisao + 1 :]), 0.15, 0.55)),
     }
 
 
@@ -376,33 +475,59 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
     """
     plano = [None] * total_frames
 
+    Y_PADRAO = 0.40
+
     # Memória da última cena com pessoas — para herdar quando falhar detecção
-    ultimo_modo_valido = "SPLIT"
+    ultimo_modo_valido = "SOLO_A"  # antes era SPLIT 0.5/0.5 (dois painéis iguais)
     ultimo_xa = 0.5
     ultimo_xb = 0.5
+    ultimo_ya = Y_PADRAO
+    ultimo_yb = Y_PADRAO
 
     for cena in cenas:
         ini, fim = cena["frame_ini"], cena["frame_fim"]
         xa, xb = cena["lado_a"], cena["lado_b"]
+        ya = cena.get("lado_a_y", Y_PADRAO)
+        yb = cena.get("lado_b_y", Y_PADRAO)
 
         if cena["n_pessoas"] == 0:
-            # Sem rosto detectado nesta cena — NÃO centraliza na mesa.
-            # Herda o enquadramento da última cena que tinha gente.
-            for f in range(ini, min(fim, total_frames)):
-                plano[f] = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb}
+            # Sem rosto detectado nesta cena (rostos de perfil enganam o
+            # detector). Antes de herdar, tenta a posição de QUEM FALA —
+            # o áudio-visual da etapa 3 sabe onde a boca está mesmo quando
+            # o detector frontal falha.
+            falantes_cena = [
+                posicoes_falante[j]
+                for j in range(ini, min(fim, len(posicoes_falante)))
+                if posicoes_falante[j] is not None
+            ]
+            if falantes_cena:
+                x_falante = float(np.median(falantes_cena))
+                for f in range(ini, min(fim, total_frames)):
+                    plano[f] = {"modo": "SOLO_A", "xa": x_falante, "xb": x_falante,
+                                "ya": Y_PADRAO, "yb": Y_PADRAO}
+                ultimo_modo_valido, ultimo_xa, ultimo_xb = "SOLO_A", x_falante, x_falante
+            else:
+                # Herda o enquadramento da última cena que tinha gente.
+                for f in range(ini, min(fim, total_frames)):
+                    plano[f] = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
+                                "ya": ultimo_ya, "yb": ultimo_yb}
             continue
 
         if cena["n_pessoas"] == 1:
             ultimo_modo_valido = "SOLO_A"
             ultimo_xa = xa
             ultimo_xb = xa
+            ultimo_ya = ya
+            ultimo_yb = ya
             for f in range(ini, min(fim, total_frames)):
-                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa}
+                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya}
             continue
 
         # Atualiza memória para cenas com 2 pessoas
         ultimo_xa = xa
         ultimo_xb = xb
+        ultimo_ya = ya
+        ultimo_yb = yb
 
         # ── 2 lados: SPLIT como padrão, SOLO só com fala exclusiva longa ──
         x_meio = (xa + xb) / 2
@@ -480,13 +605,14 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                     modo_atual = "SPLIT"
                     frame_ultimo_corte = f
 
-            plano[f] = {"modo": modo_atual, "xa": xa, "xb": xb}
+            plano[f] = {"modo": modo_atual, "xa": xa, "xb": xb, "ya": ya, "yb": yb}
 
         # Salva o modo final desta cena pra herança
         ultimo_modo_valido = modo_atual
 
     # Preenche buracos — usa último modo válido, nunca CENTRAL
-    ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb}
+    ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
+              "ya": ultimo_ya, "yb": ultimo_yb}
     for f in range(total_frames):
         if plano[f] is None:
             plano[f] = ultimo
@@ -512,7 +638,7 @@ def _obter_info_video(caminho_video: str) -> dict:
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", "-select_streams", "v:0", caminho_video
     ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0 or not resultado.stdout.strip():
         raise RuntimeError("FFprobe não conseguiu ler as informações do vídeo.")
     dados = json.loads(resultado.stdout)

@@ -20,6 +20,8 @@ def nvenc_disponivel() -> bool:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
         )
         _NVENC_DISPONIVEL = resultado.returncode == 0

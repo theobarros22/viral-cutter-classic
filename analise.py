@@ -23,7 +23,7 @@ def _obter_duracao_segundos(caminho: str) -> float:
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_format", caminho
     ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0:
         return 0.0
     dados = json.loads(resultado.stdout)
@@ -269,6 +269,12 @@ REGRAS:
 - Cada clipe deve ter entre {duracao_min} e {duracao_max} segundos
 - Prefira segmentos com começo e fim claros (início de assunto, conclusão, virada)
 - Dê uma pontuação de viralidade de 1 a 10 para cada clipe
+- HOOK: para cada clipe, identifique a frase de MAIOR impacto dentro dele
+  (a mais chocante, curiosa ou emocionante — aquela que faria alguém parar de
+  rolar o feed). Informe hook_inicio e hook_fim em timestamps ABSOLUTOS da
+  transcrição, com duração entre 1.5 e 3.5 segundos, sempre DENTRO do clipe.
+  Se a frase mais forte já está nos primeiros 5 segundos do clipe, use null
+  nos dois campos (o clipe já abre forte, não precisa de cold open).
 - Retorne APENAS um JSON válido, sem texto extra
 
 TRANSCRIÇÃO:
@@ -281,7 +287,9 @@ Retorne um array JSON com este formato exato:
     "inicio": 12.5,
     "fim": 67.3,
     "score_viral": 8,
-    "resumo": "Por que este trecho é viral: motivo curto"
+    "resumo": "Por que este trecho é viral: motivo curto",
+    "hook_inicio": 45.2,
+    "hook_fim": 47.8
   }}
 ]"""
 

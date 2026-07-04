@@ -114,7 +114,7 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
                 "-t", f"{fim - inicio:.3f}", "-map", "0", "-c", "copy",
                 "-avoid_negative_ts", "make_zero", str(caminho_saida),
             ]
-            resultado = subprocess.run(comando, capture_output=True, text=True, timeout=3600)
+            resultado = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
             if resultado.returncode != 0:
                 raise RuntimeError(resultado.stderr[-800:])
 
@@ -178,7 +178,7 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
                 "-c:v", "copy", "-af", filtro, "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart", str(saida),
             ]
-            resultado = subprocess.run(comando, capture_output=True, text=True, timeout=7200)
+            resultado = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=7200)
             if resultado.returncode != 0:
                 raise RuntimeError(resultado.stderr[-800:])
             self._json({"ok": True, "arquivo": str(saida), "preset": preset})
@@ -345,7 +345,7 @@ class ViralumeHandler(SimpleHTTPRequestHandler):
             
             comando += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", caminho_filtros]
             
-            resultado = subprocess.run(comando, capture_output=True, text=True, timeout=7200)
+            resultado = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=7200)
             if resultado.returncode != 0:
                 raise RuntimeError(f"FFmpeg filter error: {resultado.stderr[-500:]}")
             

@@ -110,6 +110,35 @@ Meta: o usuario controla o resultado sem voltar ao video original.
 
 Meta: instalar, abrir, atualizar e desinstalar sem BAT, servidor manual ou Python.
 
+## Prioridade 7 - modo agente (MCP server)
+
+Inspiracao validada: Palmier Pro (palmier.io) expoe o editor via MCP local e
+o Claude opera o projeto por chat. Aplicado ao Viralume: o pipeline vira um
+conjunto de ferramentas MCP e o agente executa fluxos completos por linguagem
+natural ("corta esse podcast em clipes de 60s com hook e legenda tiktok").
+
+Ferramentas propostas (FastMCP em Python, servidor local, reutiliza as
+funcoes existentes do pipeline sem duplicar codigo):
+
+1. `estado_projeto()` - video carregado, segmentos, checkpoints pendentes.
+2. `transcrever(video, modelo, idioma)` - etapa 1/2 atual.
+3. `analisar_segmentos(nicho, duracao_min, duracao_max)` - retorna
+   segmentos com titulo, score e hook.
+4. `processar_clipes(indices, qualidade, perfil, aplicar_hook,
+   remover_pausas)` - etapa 3 atual, com checkpoint.
+5. `aplicar_legendas(clipe, template, config)` - etapa 4 atual.
+6. `listar_resultados()` - clipes prontos com caminhos e metricas de tempo.
+
+Regras:
+- So comeca depois dos dois produtos estaveis e sem bugs (F2 do v2 concluida
+  e Viralume validado com video real).
+- O agente usa as MESMAS funcoes da interface Gradio - uma unica fonte de
+  verdade, nada de logica duplicada no servidor MCP.
+- Fase 2 futura: painel de chat dentro da propria UI chamando a Claude API
+  com tool use sobre as mesmas ferramentas.
+
+Meta: fluxo completo executado por uma unica instrucao em linguagem natural.
+
 ## Proxima entrega recomendada - versao 2.3
 
 - Painel de trabalhos interrompidos.

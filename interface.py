@@ -243,8 +243,11 @@ def ao_processar(
     retomar_processamento, remover_pausas,
     min_silencio_ms, margem_silencio_ms,
     pessoas_selecionadas, aplicar_legendas_auto,
-    usar_efeitos_virais=False,
+    efeito_legenda=False, efeito_zoom=False, efeito_sfx=False,
+    aplicar_hook=False,
 ):
+    # Etapa 4 roda se qualquer um dos três efeitos estiver marcado
+    usar_efeitos_virais = bool(efeito_legenda or efeito_zoom or efeito_sfx)
     if not _estado.get("caminho_video"):
         return "❌ Detecte as pessoas primeiro.", "", [], gr.update(visible=False, choices=[], value=None)
     if not _estado.get("segmentos") and not retomar_processamento:
@@ -278,6 +281,7 @@ def ao_processar(
             remover_pausas=remover_pausas,
             min_silencio_ms=int(min_silencio_ms),
             margem_silencio_ms=int(margem_silencio_ms),
+            aplicar_hook=aplicar_hook,
             progresso_callback=cb,
         )
 
@@ -295,6 +299,9 @@ def ao_processar(
                 resultados,
                 modelo_whisper=modelo_wh,
                 idioma=idioma_wh,
+                aplicar_legenda=bool(efeito_legenda),
+                aplicar_zoom=bool(efeito_zoom),
+                aplicar_sfx=bool(efeito_sfx),
                 progresso_callback=cb,
             )
 
@@ -324,12 +331,19 @@ def ao_processar(
             "\n".join(log_lines),
             relatorio,
             videos,
-            gr.update(visible=True, choices=videos, value=videos[0] if videos else None)
+            # Row (painel) só aceita visibilidade; as opções vão no Dropdown
+            gr.update(visible=True),
+            gr.update(choices=videos, value=videos[0] if videos else None),
         )
 
     except Exception as e:
         import traceback
-        return f"❌ Erro:\n{str(e)}\n{traceback.format_exc()}", "", [], gr.update(visible=False, choices=[], value=None)
+        return (
+            f"❌ Erro:\n{str(e)}\n{traceback.format_exc()}",
+            "", [],
+            gr.update(visible=False),
+            gr.update(choices=[], value=None),
+        )
 
 
 def ao_cancelar_processo():
@@ -698,6 +712,12 @@ def criar_interface():
                         value=False,
                         info="Ideal para vídeos falados. Preserva uma pequena respiração.",
                     )
+                    hook_automatico = gr.Checkbox(
+                        label="🪝 Hook automático (cold open)",
+                        value=False,
+                        info="O clipe abre com a frase de maior impacto antes de rodar do início. "
+                             "Requer análise com IA (a frase é identificada pelo Claude).",
+                    )
 
                 with gr.Row():
                     min_silencio_ms = gr.Slider(
@@ -714,11 +734,23 @@ def criar_interface():
                     value=False
                 )
 
-                aplicar_efeitos_virais = gr.Checkbox(
-                    label="⚡ Aplicar efeitos virais após processamento (legendas ASS + zoom dinâmico + SFX)",
-                    value=False,
-                    info="Cada clipe recebe legenda palavra por palavra com pop-up e karaokê, zoom nos momentos de ênfase e efeitos sonoros automáticos.",
-                )
+                gr.HTML('<p class="sec" style="margin-bottom:4px">⚡ Efeitos virais após processamento</p>')
+                with gr.Row():
+                    efeito_legenda = gr.Checkbox(
+                        label="💬 Legendas ASS",
+                        value=False,
+                        info="Palavra por palavra, pop-up e karaokê.",
+                    )
+                    efeito_zoom = gr.Checkbox(
+                        label="🔍 Zoom dinâmico",
+                        value=False,
+                        info="Zoom nos momentos de ênfase.",
+                    )
+                    efeito_sfx = gr.Checkbox(
+                        label="🔊 SFX",
+                        value=False,
+                        info="Efeitos sonoros automáticos.",
+                    )
 
                 gr.HTML('<div style="height:16px"></div>')
                 with gr.Row():
@@ -757,9 +789,9 @@ def criar_interface():
                         retomar_processamento, remover_pausas,
                         min_silencio_ms, margem_silencio_ms,
                         pessoas_opcoes, legendar_automaticamente,
-                        aplicar_efeitos_virais,
+                        efeito_legenda, efeito_zoom, efeito_sfx, hook_automatico,
                     ],
-                    outputs=[log_processo, relatorio_out, preview_gallery, painel_enviar_legenda],
+                    outputs=[log_processo, relatorio_out, preview_gallery, painel_enviar_legenda, opcoes_clipes],
                 )
                 btn_cancelar.click(
                     fn=ao_cancelar_processo,

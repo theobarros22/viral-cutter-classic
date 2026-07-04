@@ -126,6 +126,8 @@ def validar_midia_ffprobe(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except FileNotFoundError:
@@ -288,7 +290,11 @@ def etapa1_detectar_pessoas(
     Rápido — analisa 30 frames distribuídos nos primeiros 5 minutos.
     """
     def log(msg):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Console Windows em cp1252 não imprime emoji — degrada sem quebrar
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
         if progresso_callback:
             progresso_callback(msg)
 
@@ -345,7 +351,11 @@ def etapa2_analisar(
     ETAPA 2: Transcreve e identifica segmentos com IA.
     """
     def log(msg):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Console Windows em cp1252 não imprime emoji — degrada sem quebrar
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
         if progresso_callback:
             progresso_callback(msg)
 
@@ -393,7 +403,11 @@ def _etapa3_processar_legado(
                                  (se vazio, prioriza todas)
     """
     def log(msg):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Console Windows em cp1252 não imprime emoji — degrada sem quebrar
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
         if progresso_callback:
             progresso_callback(msg)
 
@@ -574,7 +588,7 @@ def _obter_fps(caminho_video: str) -> float:
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", "-select_streams", "v:0", caminho_video
     ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0 or not resultado.stdout.strip():
         raise RuntimeError("FFprobe não conseguiu ler o vídeo.")
     dados = json.loads(resultado.stdout)
@@ -597,6 +611,7 @@ def etapa3_processar(
     remover_pausas: bool = False,
     min_silencio_ms: int = 700,
     margem_silencio_ms: int = 120,
+    aplicar_hook: bool = False,
     progresso_callback=None
 ) -> list:
     """Corta e enquadra os clipes, salvando um checkpoint apos cada etapa."""
@@ -607,14 +622,18 @@ def etapa3_processar(
         caminho_checkpoint, carregar_checkpoint, criar_id_trabalho,
         novo_checkpoint, resultados_concluidos, salvar_checkpoint,
     )
-    from cortes import cortar_clipe
+    from cortes import cortar_clipe, cortar_clipe_com_hook, validar_hook
     from enquadramento import aplicar_enquadramento
     from rostos import detectar_quem_fala_por_frame
 
     arquivo_log_trabalho = None
 
     def log(msg):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Console Windows em cp1252 não imprime emoji — degrada sem quebrar
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
         if arquivo_log_trabalho:
             with open(arquivo_log_trabalho, "a", encoding="utf-8") as arquivo:
                 horario = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -647,7 +666,7 @@ def etapa3_processar(
 
     id_trabalho = criar_id_trabalho(
         caminho_video, segmentos, qualidade, pessoas_priorizadas_ids, perfil,
-        remover_pausas, min_silencio_ms, margem_silencio_ms,
+        remover_pausas, min_silencio_ms, margem_silencio_ms, aplicar_hook,
     )
     arquivo_checkpoint = caminho_checkpoint(pasta_saida, id_trabalho)
     arquivo_log_trabalho = os.path.join(
@@ -713,10 +732,31 @@ def etapa3_processar(
 
         try:
             inicio_corte = time.monotonic()
-            if not cortar_clipe(caminho_video, seg["inicio"], seg["fim"], caminho_temp):
+
+            # ── Hook automático (cold open) ──────────────────────────────
+            # Se ativado e a análise identificou a frase de maior impacto,
+            # o clipe abre com ela antes de rodar do início.
+            hook = validar_hook(seg) if aplicar_hook else None
+            duracao_hook_s = 0.0  # segundos que o hook ADICIONA ao clipe
+            if hook is not None:
+                h_ini, h_fim = hook
+                log(f"   [{i}/{total}] 🪝 Hook: abrindo com a frase de {h_ini:.1f}s-{h_fim:.1f}s")
+                cortou = cortar_clipe_com_hook(
+                    caminho_video, seg["inicio"], seg["fim"], h_ini, h_fim, caminho_temp
+                )
+                if cortou:
+                    duracao_hook_s = h_fim - h_ini
+                else:
+                    log(f"   [{i}/{total}] ⚠️ Corte com hook falhou. Usando corte normal...")
+                    cortou = cortar_clipe(caminho_video, seg["inicio"], seg["fim"], caminho_temp)
+            else:
+                cortou = cortar_clipe(caminho_video, seg["inicio"], seg["fim"], caminho_temp)
+
+            if not cortou:
                 raise RuntimeError(f"Falha ao cortar o clipe {i}.")
             tempo_corte = time.monotonic() - inicio_corte
 
+            duracao_pausas_removidas_s = 0.0  # segundos REMOVIDOS do clipe
             if remover_pausas:
                 caminho_compacto = os.path.join(pasta_saida, f"_compacto_{nome_arquivo}")
                 log(f"   [{i}/{total}] Removendo pausas internas...")
@@ -728,6 +768,7 @@ def etapa3_processar(
                     margem_ms=margem_silencio_ms,
                 )
                 if resumo_silencio["alterado"]:
+                    duracao_pausas_removidas_s = resumo_silencio["removido_ms"] / 1000.0
                     os.replace(caminho_compacto, caminho_temp)
                     log(
                         f"   [{i}/{total}] "
@@ -769,7 +810,14 @@ def etapa3_processar(
             # ── Validação FFprobe pós-enquadramento ───────────────────────
             checkpoint["clipes"][str(i)]["etapa"] = "validacao"
             salvar_checkpoint(arquivo_checkpoint, checkpoint)
-            _dur_esperada = seg["fim"] - seg["inicio"]
+            # Duração esperada = corte base + hook (cold open) − pausas removidas.
+            # Sem esses ajustes a validação rejeitava clipes corretos: o hook
+            # ADICIONA segundos e o remove-pausas SUBTRAI.
+            _dur_esperada = (
+                seg["fim"] - seg["inicio"]
+                + duracao_hook_s
+                - duracao_pausas_removidas_s
+            )
             _val = validar_midia_ffprobe(
                 caminho_final,
                 duracao_esperada=_dur_esperada,
@@ -913,6 +961,7 @@ def etapa4_efeitos_virais(
     resultados: list,
     modelo_whisper: str = "base",
     idioma: str = "pt",
+    aplicar_legenda: bool = True,
     aplicar_zoom: bool = True,
     aplicar_sfx: bool = True,
     pasta_sfx: str = None,
@@ -945,7 +994,11 @@ def etapa4_efeitos_virais(
     cfg = _INTENSIDADE.get(intensidade, _INTENSIDADE["medio"])
 
     def log(msg):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Console Windows em cp1252 não imprime emoji — degrada sem quebrar
+            print(msg.encode("ascii", errors="replace").decode("ascii"))
         if progresso_callback:
             progresso_callback(msg)
 
@@ -978,7 +1031,16 @@ def etapa4_efeitos_virais(
     if pasta_sfx is None:
         pasta_sfx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "sfx")
 
-    log(f"\n🎬 Etapa 4 — Efeitos Virais | intensidade={intensidade}")
+    if not (aplicar_legenda or aplicar_zoom or aplicar_sfx):
+        log("🎬 Etapa 4 — nenhum efeito selecionado. Clipes mantidos como estão.")
+        return resultados
+
+    efeitos_ativos = [
+        nome for nome, ativo in
+        [("legendas", aplicar_legenda), ("zoom", aplicar_zoom), ("SFX", aplicar_sfx)]
+        if ativo
+    ]
+    log(f"\n🎬 Etapa 4 — Efeitos Virais | intensidade={intensidade} | efeitos: {' + '.join(efeitos_ativos)}")
     log(f"   Whisper: {modelo_whisper} | Idioma: {idioma}")
 
     total = len(resultados)
@@ -1057,14 +1119,17 @@ def etapa4_efeitos_virais(
             log(f"   [{i}/{total}] 🤖 Analisando com IA...")
             cartoes_enriquecidos = analyze_context_for_viral_effects(cartoes)
 
-            # ── 3. Gerar arquivo .ass ──────────────────────────────────────
-            fd_ass, path_ass = tempfile.mkstemp(suffix=".ass")
-            os.close(fd_ass)
-            generate_subtitles_ass(cartoes_enriquecidos, path_ass)
-            escaped_ass = path_ass.replace("\\", "/").replace(":", "\\:")
+            # ── 3. Gerar arquivo .ass (só se legendas estiverem ativas) ────
+            filtro_ass = None
+            if aplicar_legenda:
+                fd_ass, path_ass = tempfile.mkstemp(suffix=".ass")
+                os.close(fd_ass)
+                generate_subtitles_ass(cartoes_enriquecidos, path_ass)
+                escaped_ass = path_ass.replace("\\", "/").replace(":", "\\:")
+                filtro_ass = f"ass='{escaped_ass}'"
 
             # ── 4. Montar filter_complex único ─────────────────────────────
-            # Vídeo: zoom condicional → legenda ASS
+            # Vídeo: zoom condicional → legenda ASS condicional
             timestamps_zoom = [
                 c["start"] for c in cartoes_enriquecidos if c.get("zoom")
             ] if aplicar_zoom else []
@@ -1076,13 +1141,18 @@ def etapa4_efeitos_virais(
                     f"between(t,{t:.3f},{t + dur:.3f})" for t in timestamps_zoom
                 )
                 expr_zoom = f"if(gt({conds},0),{fator:.3f},1)"
-                vf_video = (
-                    f"[0:v]scale=w='iw*({expr_zoom})':h='ih*({expr_zoom})':eval=frame,"
-                    f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2,"
-                    f"ass='{escaped_ass}'[vout]"
-                )
+                partes_video = [
+                    f"scale=w='iw*({expr_zoom})':h='ih*({expr_zoom})':eval=frame",
+                    "crop=1080:1920:(iw-1080)/2:(ih-1920)/2",
+                ]
+                if filtro_ass:
+                    partes_video.append(filtro_ass)
+                vf_video = "[0:v]" + ",".join(partes_video) + "[vout]"
+            elif filtro_ass:
+                vf_video = f"[0:v]{filtro_ass}[vout]"
             else:
-                vf_video = f"[0:v]ass='{escaped_ass}'[vout]"
+                # Sem legenda e sem zoom neste clipe: vídeo passa direto
+                vf_video = "[0:v]null[vout]"
 
             # Áudio: SFX com adelay → amix com voz
             inputs_sfx = []
@@ -1125,6 +1195,13 @@ def etapa4_efeitos_virais(
                 filter_complex = vf_video
                 map_audio = "0:a?"
 
+            # Nada a aplicar neste clipe (ex.: só zoom ativo, mas a IA não
+            # marcou nenhum momento de ênfase) → evita re-encode inútil.
+            if vf_video == "[0:v]null[vout]" and not sfx_filters:
+                log(f"   [{i}/{total}] ⏭️ Nenhum efeito aplicável a este clipe. Mantido original.")
+                resultados_atualizados.append(dict(resultado))
+                continue
+
             # ── 5. Executar FFmpeg — único passe, fallback robusto ─────────
             caminho_viral = caminho_clip.replace(".mp4", "_viral.mp4")
             cmd_base = (
@@ -1150,6 +1227,8 @@ def etapa4_efeitos_virais(
                         check=True,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                     )
                     encoder_usado = encoder
                     break
@@ -1173,9 +1252,12 @@ def etapa4_efeitos_virais(
             log(f"   [{i}/{total}] ✅ FFmpeg concluído [{encoder_usado}]")
 
             # ── Validação FFprobe do arquivo viral ─────────────────────────
+            # Compara com a duração REAL do clipe de entrada (que pode ter
+            # hook e pausas removidas), não com a duração teórica do segmento.
+            _dur_entrada = validar_midia_ffprobe(caminho_clip).get("duration") or 0
             _val_viral = validar_midia_ffprobe(
                 caminho_viral,
-                duracao_esperada=resultado.get("duracao"),
+                duracao_esperada=_dur_entrada if _dur_entrada > 0 else resultado.get("duracao"),
                 audio_policy="optional",
             )
             if not _val_viral["valid"]:

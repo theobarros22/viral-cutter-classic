@@ -14,6 +14,7 @@ VERSAO_CHECKPOINT = 1
 def criar_id_trabalho(
     caminho_video, segmentos, qualidade, pessoas_ids, perfil="equilibrado",
     remover_pausas=False, min_silencio_ms=700, margem_silencio_ms=120,
+    aplicar_hook=False,
 ):
     estatistica = os.stat(caminho_video)
     dados = {
@@ -26,6 +27,7 @@ def criar_id_trabalho(
         "remover_pausas": bool(remover_pausas),
         "min_silencio_ms": int(min_silencio_ms),
         "margem_silencio_ms": int(margem_silencio_ms),
+        "aplicar_hook": bool(aplicar_hook),
     }
     texto = json.dumps(
         dados, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
@@ -95,6 +97,8 @@ def resultado_valido(resultado):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         return verificacao.returncode == 0 and "video" in verificacao.stdout.lower()

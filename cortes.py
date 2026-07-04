@@ -183,7 +183,7 @@ def remover_silencios(
     cmd += argumentos_encoder(temporario=True)
     cmd += ["-c:a", "aac", "-pix_fmt", "yuv420p", "-movflags", "+faststart", caminho_saida]
 
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0:
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
@@ -276,6 +276,87 @@ def ajustar_cortes_com_silencio(segmentos: list, silencias: list, margem_ms: int
     return segmentos_ajustados
 
 
+def validar_hook(seg: dict, duracao_min_s: float = 1.0, duracao_max_s: float = 5.0) -> tuple:
+    """
+    Valida os dados de hook de um segmento e retorna (hook_inicio, hook_fim)
+    ou None se o hook não deve ser aplicado.
+
+    Regras:
+    - hook_inicio/hook_fim precisam existir e ser números válidos
+    - o hook precisa estar DENTRO do clipe (com folga de 0.2s nas bordas)
+    - duração entre duracao_min_s e duracao_max_s
+    - se o hook começa nos primeiros 5s do clipe, não aplica (o clipe já
+      abre com a frase forte — cold open seria repetição imediata)
+    """
+    try:
+        h_ini = float(seg.get("hook_inicio"))
+        h_fim = float(seg.get("hook_fim"))
+        inicio = float(seg["inicio"])
+        fim = float(seg["fim"])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+    if h_ini < inicio - 0.2 or h_fim > fim + 0.2:
+        return None  # hook fora do clipe
+    duracao = h_fim - h_ini
+    if duracao < duracao_min_s or duracao > duracao_max_s:
+        return None  # duração fora da faixa útil
+    if h_ini <= inicio + 5.0:
+        return None  # clipe já abre com a frase forte
+
+    return (max(inicio, h_ini), min(fim, h_fim))
+
+
+def cortar_clipe_com_hook(
+    caminho_video: str,
+    inicio: float,
+    fim: float,
+    hook_inicio: float,
+    hook_fim: float,
+    caminho_saida: str,
+) -> bool:
+    """
+    Corta o clipe abrindo com o HOOK (cold open): a frase de maior impacto
+    aparece primeiro, depois o clipe roda do início normalmente.
+
+    Estrutura do resultado: [hook 1.5-3.5s] + [clipe completo inicio→fim]
+
+    É o padrão dos cortes virais de referência — os primeiros 2 segundos
+    decidem se a pessoa continua assistindo.
+    """
+    if inicio < 0 or fim <= inicio or hook_fim <= hook_inicio:
+        print(f"⚠️ Hook inválido: clipe {inicio}-{fim}, hook {hook_inicio}-{hook_fim}")
+        return False
+
+    filtros = (
+        # Trecho 1: o hook (frase de impacto)
+        f"[0:v]trim=start={hook_inicio:.3f}:end={hook_fim:.3f},setpts=PTS-STARTPTS[v0];"
+        f"[0:a]atrim=start={hook_inicio:.3f}:end={hook_fim:.3f},asetpts=PTS-STARTPTS[a0];"
+        # Trecho 2: o clipe completo
+        f"[0:v]trim=start={inicio:.3f}:end={fim:.3f},setpts=PTS-STARTPTS[v1];"
+        f"[0:a]atrim=start={inicio:.3f}:end={fim:.3f},asetpts=PTS-STARTPTS[a1];"
+        # Emenda os dois
+        f"[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]"
+    )
+
+    cmd = ["ffmpeg", "-y", "-i", caminho_video, "-filter_complex", filtros]
+    cmd += ["-map", "[vout]", "-map", "[aout]"]
+    cmd += argumentos_encoder(temporario=True)
+    cmd += [
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        caminho_saida,
+    ]
+
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if resultado.returncode != 0:
+        print(f"⚠️ FFmpeg falhou no corte com hook: {resultado.stderr[-600:]}")
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+    return resultado.returncode == 0
+
+
 def cortar_clipe(caminho_video: str, inicio: float, fim: float, caminho_saida: str) -> bool:
     """
     Corta um trecho do vídeo usando FFmpeg.
@@ -310,7 +391,7 @@ def cortar_clipe(caminho_video: str, inicio: float, fim: float, caminho_saida: s
         caminho_saida
     ]
 
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0:
         print(f"⚠️ FFmpeg falhou ao cortar o clipe: {resultado.stderr[-600:]}")
         if os.path.exists(caminho_saida):

@@ -10,6 +10,7 @@ from cortes import (
     ajustar_cortes_com_silencio,
     calcular_intervalos_fala,
     refinar_limites_com_palavras,
+    validar_hook,
 )
 from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop
 from ffmpeg_utils import argumentos_encoder
@@ -89,6 +90,29 @@ class TestCore(unittest.TestCase):
         )
         self.assertAlmostEqual(ajustados[0]["inicio"], 10.1, places=2)
 
+    def test_hook_valido_e_aceito(self):
+        seg = {"inicio": 10.0, "fim": 70.0, "hook_inicio": 40.0, "hook_fim": 42.5}
+        self.assertEqual(validar_hook(seg), (40.0, 42.5))
+
+    def test_hook_no_comeco_do_clipe_e_rejeitado(self):
+        # Frase forte já abre o clipe — cold open seria repetição imediata
+        seg = {"inicio": 10.0, "fim": 70.0, "hook_inicio": 12.0, "hook_fim": 14.0}
+        self.assertIsNone(validar_hook(seg))
+
+    def test_hook_fora_do_clipe_e_rejeitado(self):
+        seg = {"inicio": 10.0, "fim": 70.0, "hook_inicio": 80.0, "hook_fim": 82.0}
+        self.assertIsNone(validar_hook(seg))
+
+    def test_hook_ausente_ou_nulo_e_rejeitado(self):
+        self.assertIsNone(validar_hook({"inicio": 10.0, "fim": 70.0}))
+        self.assertIsNone(validar_hook(
+            {"inicio": 10.0, "fim": 70.0, "hook_inicio": None, "hook_fim": None}
+        ))
+
+    def test_hook_longo_demais_e_rejeitado(self):
+        seg = {"inicio": 10.0, "fim": 70.0, "hook_inicio": 30.0, "hook_fim": 45.0}
+        self.assertIsNone(validar_hook(seg))
+
     def test_nome_vazio_tem_fallback(self):
         self.assertEqual(sanitizar_nome(""), "clipe")
 
@@ -155,7 +179,11 @@ class TestCore(unittest.TestCase):
             return True
 
         modulos = {
-            "cortes": types.SimpleNamespace(cortar_clipe=cortar_clipe),
+            "cortes": types.SimpleNamespace(
+                cortar_clipe=cortar_clipe,
+                cortar_clipe_com_hook=lambda *_a, **_k: False,
+                validar_hook=validar_hook,
+            ),
             "enquadramento": types.SimpleNamespace(aplicar_enquadramento=aplicar_enquadramento),
             "rostos": types.SimpleNamespace(detectar_quem_fala_por_frame=lambda *_a, **_k: []),
         }
@@ -205,7 +233,11 @@ class TestCore(unittest.TestCase):
             return True
 
         modulos = {
-            "cortes": types.SimpleNamespace(cortar_clipe=cortar_clipe),
+            "cortes": types.SimpleNamespace(
+                cortar_clipe=cortar_clipe,
+                cortar_clipe_com_hook=lambda *_a, **_k: False,
+                validar_hook=validar_hook,
+            ),
             "enquadramento": types.SimpleNamespace(aplicar_enquadramento=aplicar_enquadramento),
             "rostos": types.SimpleNamespace(detectar_quem_fala_por_frame=detectar_falante),
         }
