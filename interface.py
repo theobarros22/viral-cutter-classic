@@ -64,26 +64,26 @@ IDIOMAS = {
 }
 MODELOS_WHISPER = {
     "base   — Muito rápido":          "base",
-    "small  — Rápido na GPU ⭐": "small",
+    "small  — Rápido na GPU (recomendado)": "small",
     "medium — Mais preciso":     "medium",
     "large  — Máxima precisão":  "large",
 }
 NICHOS = {
-    "🎙️ Podcast":   "podcast",
-    "🎯 Geral":     "geral",
-    "💒 Casamento": "casamento",
-    "🔍 Crime":     "crime",
-    "⚽ Esporte":   "esporte",
-    "📚 Educação":  "educacao",
+    "Podcast":   "podcast",
+    "Geral":     "geral",
+    "Casamento": "casamento",
+    "Crime":     "crime",
+    "Esporte":   "esporte",
+    "Educação":  "educacao",
 }
 QUALIDADES = {
-    "1080p — Full HD ⭐": "1080p",
+    "1080p — Full HD (recomendado)": "1080p",
     "720p  — Leve":       "720p",
     "4K    — Ultra HD":   "4k",
 }
 PERFIS_PROCESSAMENTO = {
     "Rápido — análise visual reduzida": "rapido",
-    "Equilibrado — recomendado ⭐": "equilibrado",
+    "Equilibrado — recomendado": "equilibrado",
     "Máxima qualidade — análise detalhada": "qualidade",
 }
 
@@ -105,64 +105,197 @@ _estado = {
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Space+Mono:wght@400;700&display=swap');
-
 :root {
-    --bg: #080808; --surface: #111; --surface2: #181818;
-    --border: #242424; --accent: #e8ff47; --cyan: #00cec9;
-    --text: #f0f0f0; --muted: #555; --radius: 10px;
+    --primary-400: #edff86; --primary-500: #dfff3f; --primary-600: #c6e637;
+    --primary-700: #a9c42c; --primary-800: #839820;
+    --vc-bg: #07090c; --vc-surface: #0f1318; --vc-raised: #151a21;
+    --vc-border: #252c36; --vc-border-strong: #394350;
+    --vc-accent: #dfff3f; --vc-accent-hover: #edff86;
+    --vc-cyan: #4de3d5; --vc-violet: #a78bfa;
+    --vc-text: #f5f7fa; --vc-muted: #9aa5b3; --vc-subtle: #687383;
+    --vc-radius: 14px; --vc-shadow: 0 18px 55px rgba(0, 0, 0, .28);
 }
 
+html { color-scheme: dark; background: var(--vc-bg); }
+*, *::before, *::after { box-sizing: border-box; }
 body, .gradio-container {
-    background: var(--bg) !important;
-    color: var(--text) !important;
-    font-family: 'Syne', sans-serif !important;
+    background:
+        radial-gradient(circle at 14% -8%, rgba(223,255,63,.09), transparent 30rem),
+        radial-gradient(circle at 92% 18%, rgba(77,227,213,.055), transparent 26rem),
+        var(--vc-bg) !important;
+    color: var(--vc-text) !important;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif !important;
 }
-.gradio-container { max-width: 960px !important; margin: 0 auto !important; padding: 32px 24px !important; }
+body { overflow-x: hidden; }
+.gradio-container {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 1180px !important;
+    margin: 0 auto !important;
+    padding: 32px clamp(16px, 3vw, 40px) 72px !important;
+}
 
-.app-header { text-align: center; margin-bottom: 40px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
-.app-header h1 { font-size: 2.8rem; font-weight: 800; color: var(--accent); letter-spacing: -2px; margin-bottom: 6px; }
-.app-header p  { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 3px; }
+.app-header {
+    position: relative; overflow: hidden; display: grid;
+    grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 32px;
+    margin-bottom: 24px; padding: clamp(24px, 4vw, 44px);
+    border: 1px solid var(--vc-border); border-radius: 22px;
+    background: linear-gradient(135deg, rgba(21,26,33,.98), rgba(10,13,17,.96));
+    box-shadow: var(--vc-shadow);
+}
+.app-header::after {
+    content: ""; position: absolute; right: -80px; bottom: -110px;
+    width: 290px; height: 290px; border: 1px solid rgba(223,255,63,.18);
+    border-radius: 50%;
+    box-shadow: 0 0 0 34px rgba(223,255,63,.025), 0 0 0 70px rgba(223,255,63,.018);
+    pointer-events: none;
+}
+.brand-lockup { position: relative; z-index: 1; min-width: 0; max-width: 100%; }
+.brand-kicker {
+    display: flex; align-items: center; gap: 10px; margin: 0 0 16px;
+    color: var(--vc-accent); font-size: .72rem; font-weight: 750;
+    letter-spacing: .16em; text-transform: uppercase;
+}
+.brand-kicker::before {
+    content: ""; width: 28px; height: 3px; border-radius: 999px;
+    background: var(--vc-accent); box-shadow: 0 0 16px rgba(223,255,63,.35);
+}
+.app-header h1 {
+    max-width: 760px; margin: 0; color: var(--vc-text);
+    font-size: clamp(2.1rem, 5vw, 4.25rem); font-weight: 780;
+    line-height: .96; letter-spacing: -.065em;
+}
+.app-header h1 span { color: var(--vc-accent); }
+.app-header .hero-copy {
+    max-width: 650px; margin: 18px 0 0; color: var(--vc-muted);
+    font-size: clamp(.95rem, 1.8vw, 1.08rem); line-height: 1.65; overflow-wrap: anywhere;
+}
+.hero-meta {
+    position: relative; z-index: 1; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 10px;
+}
+.status-pill {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 34px;
+    padding: 7px 12px; border: 1px solid var(--vc-border); border-radius: 999px;
+    background: rgba(7,9,12,.64); color: var(--vc-muted);
+    font-size: .78rem; font-weight: 650; white-space: nowrap;
+}
+.status-pill::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--vc-accent); box-shadow: 0 0 10px rgba(223,255,63,.6);
+}
 
-.sec { font-family: 'Space Mono', monospace; font-size: 0.7rem; text-transform: uppercase;
-       letter-spacing: 4px; color: var(--accent); margin: 20px 0 12px;
-       padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.gradio-container .tabs {
+    overflow: hidden; border: 1px solid var(--vc-border) !important;
+    border-radius: 18px !important; background: rgba(15,19,24,.82) !important;
+    box-shadow: 0 14px 40px rgba(0,0,0,.2) !important;
+}
+.gradio-container .tab-container {
+    gap: 8px !important; padding: 8px !important;
+    border-bottom: 1px solid var(--vc-border) !important; background: #0b0e12 !important;
+}
+.gradio-container .tab-container button {
+    min-height: 48px !important; padding: 0 20px !important;
+    border: 1px solid transparent !important; border-radius: 10px !important;
+    color: var(--vc-muted) !important; font-size: .9rem !important; font-weight: 700 !important;
+    cursor: pointer !important;
+    transition: color .18s ease, background .18s ease, border-color .18s ease !important;
+}
+.gradio-container .tab-container button:hover { color: var(--vc-text) !important; background: var(--vc-raised) !important; }
+.gradio-container .tab-container button.selected,
+.gradio-container .tab-container button[aria-selected="true"] {
+    border-color: rgba(223,255,63,.28) !important;
+    background: rgba(223,255,63,.1) !important; color: var(--vc-accent) !important;
+}
 
-.pessoa-card { background: var(--surface); border: 2px solid var(--border); border-radius: 10px;
-               padding: 12px; text-align: center; cursor: pointer; transition: all 0.15s; }
-.pessoa-card:hover  { border-color: var(--accent); }
-.pessoa-card.ativa  { border-color: var(--accent); background: rgba(232,255,71,0.08); }
-.pessoa-card img    { width: 100%; border-radius: 6px; margin-bottom: 8px; }
-.pessoa-card span   { font-size: 12px; color: var(--text); }
+.sec {
+    display: flex; align-items: center; gap: 12px; margin: 36px 0 16px;
+    color: var(--vc-text); font-size: .82rem; font-weight: 780;
+    letter-spacing: .1em; text-transform: uppercase;
+}
+.sec::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--vc-border-strong), transparent);
+}
+.gradio-container .block, .gradio-container .form, .gradio-container .panel {
+    border-color: var(--vc-border) !important; border-radius: var(--vc-radius) !important;
+}
+.gradio-container .form, .gradio-container .panel { background: rgba(15,19,24,.72) !important; }
+.gradio-container label, .gradio-container .label-wrap { color: var(--vc-text) !important; font-weight: 650 !important; }
+.gradio-container input, .gradio-container textarea, .gradio-container select { color: var(--vc-text) !important; }
+.gradio-container button {
+    min-height: 44px; cursor: pointer !important;
+    transition: transform .16s ease, background .18s ease, border-color .18s ease, color .18s ease !important;
+}
+.gradio-container button:active { transform: translateY(1px); }
+.gradio-container button:focus-visible, .gradio-container input:focus-visible,
+.gradio-container textarea:focus-visible, .gradio-container [role="tab"]:focus-visible {
+    outline: 3px solid rgba(223,255,63,.34) !important; outline-offset: 2px !important;
+}
 
-.btn-detectar button { background: var(--cyan) !important; color: #000 !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
-    border: none !important; border-radius: var(--radius) !important;
-    padding: 12px 24px !important; width: 100% !important; cursor: pointer !important; }
+.pessoa-card {
+    padding: 12px; border: 1px solid var(--vc-border); border-radius: var(--vc-radius);
+    background: var(--vc-surface); text-align: center; cursor: pointer;
+    transition: border-color .18s ease, background .18s ease;
+}
+.pessoa-card:hover { border-color: var(--vc-accent); }
+.pessoa-card.ativa { border-color: var(--vc-accent); background: rgba(223,255,63,.08); }
+.pessoa-card img { width: 100%; margin-bottom: 8px; border-radius: 9px; }
+.pessoa-card span { color: var(--vc-text); font-size: 12px; }
 
-.btn-analisar button { background: var(--surface2) !important; color: var(--cyan) !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
-    border: 1px solid var(--cyan) !important; border-radius: var(--radius) !important;
-    padding: 12px 24px !important; width: 100% !important; cursor: pointer !important; }
+.btn-detectar button, .btn-analisar button, .btn-processar button, .btn-legendar button {
+    width: 100% !important; min-height: 50px !important; padding: 12px 24px !important;
+    border-radius: 12px !important; font-family: inherit !important;
+    font-weight: 780 !important; letter-spacing: .025em !important;
+}
+.btn-detectar button {
+    border: 1px solid rgba(77,227,213,.35) !important;
+    background: rgba(77,227,213,.1) !important; color: var(--vc-cyan) !important;
+}
+.btn-detectar button:hover { background: rgba(77,227,213,.17) !important; }
+.btn-analisar button {
+    border: 1px solid rgba(167,139,250,.38) !important;
+    background: rgba(167,139,250,.1) !important; color: #c4b5fd !important;
+}
+.btn-analisar button:hover { background: rgba(167,139,250,.18) !important; }
+.btn-processar button {
+    border: 1px solid var(--vc-accent) !important; background: var(--vc-accent) !important;
+    color: #111600 !important; box-shadow: 0 10px 30px rgba(223,255,63,.13) !important;
+}
+.btn-processar button:hover { background: var(--vc-accent-hover) !important; }
+.btn-legendar button {
+    border: 1px solid rgba(167,139,250,.5) !important;
+    background: #7c5ce0 !important; color: #fff !important;
+}
+.btn-legendar button:hover { background: #8b6bea !important; }
 
-.btn-processar button { background: var(--accent) !important; color: #000 !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 800 !important; font-size: 1rem !important;
-    border: none !important; border-radius: var(--radius) !important;
-    padding: 16px 32px !important; width: 100% !important; cursor: pointer !important; }
-.btn-processar button:hover { background: #fff !important; }
+.output-log textarea {
+    min-height: 150px !important; border: 1px solid #22352b !important;
+    background: #080c0a !important; color: #9bf5b5 !important;
+    font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace !important;
+    font-size: .78rem !important; line-height: 1.6 !important;
+}
+input[type=checkbox] { accent-color: var(--vc-accent) !important; }
+.gr-slider input[type=range] { accent-color: var(--vc-accent) !important; }
+.helper-note { margin: 18px 0 0; color: var(--vc-subtle); font-size: .78rem; line-height: 1.55; text-align: center; }
 
-.btn-legendar button { background: #9b59b6 !important; color: #fff !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 800 !important; font-size: 1rem !important;
-    border: none !important; border-radius: var(--radius) !important;
-    padding: 16px 32px !important; width: 100% !important; cursor: pointer !important; }
-.btn-legendar button:hover { background: #8e44ad !important; }
-
-.output-log textarea { font-family: 'Space Mono', monospace !important; font-size: 0.78rem !important;
-    background: #050505 !important; color: #88ff88 !important;
-    border: 1px solid #1a3a1a !important; min-height: 180px !important; }
-
-input[type=checkbox] { accent-color: var(--accent) !important; }
-.gr-slider input[type=range] { accent-color: var(--accent) !important; }
+@media (max-width: 760px) {
+    .gradio-container { padding: 14px 12px 48px !important; }
+    .gradio-container > .main > .wrap { padding-inline: 0 !important; }
+    .gradio-container .main, .gradio-container .wrap, .gradio-container .contain { min-width: 0 !important; }
+    .app-header { grid-template-columns: 1fr; gap: 22px; padding: 24px 20px; border-radius: 16px; }
+    .app-header h1 { font-size: clamp(2.25rem, 14vw, 3.35rem); }
+    .hero-meta { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+    .gradio-container .tabs { border-radius: 14px !important; }
+    .gradio-container .tab-container { overflow-x: auto !important; }
+    .gradio-container .tab-container button { min-width: max-content; }
+    .sec { margin-top: 28px; font-size: .76rem; letter-spacing: .06em; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important;
+    }
+}
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -625,12 +758,20 @@ def ao_exportar_legenda_srt(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def criar_interface():
-    with gr.Blocks(css=CSS, title="Viral Cutter v2") as app:
+    with gr.Blocks(title="Viral Cutter v2") as app:
 
         gr.HTML("""
         <div class="app-header">
-            <h1>VIRAL CUTTER</h1>
-            <p>Corte automático + Legendas animadas — v2</p>
+            <div class="brand-lockup">
+                <p class="brand-kicker">Viral Cutter Studio</p>
+                <h1>Transforme conversas em <span>clipes que prendem.</span></h1>
+                <p class="hero-copy">Detecte participantes, encontre os melhores momentos e exporte cortes verticais com enquadramento e legendas inteligentes.</p>
+            </div>
+            <div class="hero-meta" aria-label="Recursos do aplicativo">
+                <span class="status-pill">Processamento local</span>
+                <span class="status-pill">Retomada automática</span>
+                <span class="status-pill">Privacidade preservada</span>
+            </div>
         </div>
         """)
 
@@ -639,13 +780,13 @@ def criar_interface():
             # ══════════════════════════════════════════════════════════════
             # TAB 1 — CORTE VIRAL
             # ══════════════════════════════════════════════════════════════
-            with gr.Tab("✂️  Corte Viral", id="tab_corte"):
+            with gr.Tab("Corte Viral", id="tab_corte"):
 
                 gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
                 arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
 
                 with gr.Row(elem_classes="btn-detectar"):
-                    btn_detectar = gr.Button("🔍  DETECTAR PESSOAS", scale=1)
+                    btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
 
                 log_deteccao = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
 
@@ -666,11 +807,11 @@ def criar_interface():
                 gr.HTML('<p class="sec">03 — Transcrição & Análise</p>')
                 with gr.Row():
                     idioma  = gr.Dropdown(choices=list(IDIOMAS.keys()),         value="Português",             label="Idioma")
-                    modelo  = gr.Dropdown(choices=list(MODELOS_WHISPER.keys()), value="small  — Rápido na GPU ⭐", label="Modelo Whisper")
-                    nicho   = gr.Dropdown(choices=list(NICHOS.keys()),          value="🎙️ Podcast",             label="Nicho")
+                    modelo  = gr.Dropdown(choices=list(MODELOS_WHISPER.keys()), value="small  — Rápido na GPU (recomendado)", label="Modelo Whisper")
+                    nicho   = gr.Dropdown(choices=list(NICHOS.keys()),          value="Podcast",             label="Nicho")
 
                 modo_offline = gr.Checkbox(
-                    label="📴 Modo offline — sem API (não consome créditos)",
+                    label="Modo offline — sem API (não consome créditos)",
                     value=False
                 )
 
@@ -679,7 +820,7 @@ def criar_interface():
                     duracao_max = gr.Slider(minimum=30, maximum=180, value=90, step=5, label="Duração máxima (s)")
 
                 with gr.Row(elem_classes="btn-analisar"):
-                    btn_analisar = gr.Button("🎙️  TRANSCREVER & ANALISAR", scale=1)
+                    btn_analisar = gr.Button("TRANSCREVER E ANALISAR", scale=1)
 
                 log_analise = gr.Textbox(label="", interactive=False, lines=6, elem_classes="output-log")
 
@@ -692,12 +833,12 @@ def criar_interface():
                     )
                     qualidade = gr.Dropdown(
                         choices=list(QUALIDADES.keys()),
-                        value="1080p — Full HD ⭐",
+                        value="1080p — Full HD (recomendado)",
                         label="Qualidade", scale=1
                     )
                     perfil_processamento = gr.Dropdown(
                         choices=list(PERFIS_PROCESSAMENTO.keys()),
-                        value="Equilibrado — recomendado ⭐",
+                        value="Equilibrado — recomendado",
                         label="Velocidade", scale=1
                     )
 
@@ -713,7 +854,7 @@ def criar_interface():
                         info="Ideal para vídeos falados. Preserva uma pequena respiração.",
                     )
                     hook_automatico = gr.Checkbox(
-                        label="🪝 Hook automático (cold open)",
+                        label="Hook automático (cold open)",
                         value=False,
                         info="O clipe abre com a frase de maior impacto antes de rodar do início. "
                              "Requer análise com IA (a frase é identificada pelo Claude).",
@@ -730,37 +871,37 @@ def criar_interface():
                     )
 
                 legendar_automaticamente = gr.Checkbox(
-                    label="🎨 Aplicar legendas automáticas nos clipes gerados (Estilo: Palavra Vazada)",
+                    label="Aplicar legendas automáticas nos clipes gerados (estilo: Palavra Vazada)",
                     value=False
                 )
 
-                gr.HTML('<p class="sec" style="margin-bottom:4px">⚡ Efeitos virais após processamento</p>')
+                gr.HTML('<p class="sec" style="margin-bottom:4px">Efeitos virais após processamento</p>')
                 with gr.Row():
                     efeito_legenda = gr.Checkbox(
-                        label="💬 Legendas ASS",
+                        label="Legendas ASS",
                         value=False,
                         info="Palavra por palavra, pop-up e karaokê.",
                     )
                     efeito_zoom = gr.Checkbox(
-                        label="🔍 Zoom dinâmico",
+                        label="Zoom dinâmico",
                         value=False,
                         info="Zoom nos momentos de ênfase.",
                     )
                     efeito_sfx = gr.Checkbox(
-                        label="🔊 SFX",
+                        label="Efeitos sonoros (SFX)",
                         value=False,
                         info="Efeitos sonoros automáticos.",
                     )
 
                 gr.HTML('<div style="height:16px"></div>')
                 with gr.Row():
-                    btn_processar = gr.Button("⚡  PROCESSAR VÍDEO", scale=3, variant="primary")
-                    btn_cancelar = gr.Button("🛑 CANCELAR", scale=1, variant="stop")
+                    btn_processar = gr.Button("PROCESSAR VÍDEO", scale=3, variant="primary", elem_classes="btn-processar")
+                    btn_cancelar = gr.Button("CANCELAR", scale=1, variant="stop")
 
                 gr.HTML('<p class="sec" style="margin-top:28px">05 — Resultado</p>')
                 with gr.Row():
-                    btn_abrir_saida = gr.Button("📂 Abrir pasta de saída", scale=1)
-                    btn_abrir_logs = gr.Button("📝 Abrir pasta de logs", scale=1)
+                    btn_abrir_saida = gr.Button("Abrir pasta de saída", scale=1)
+                    btn_abrir_logs = gr.Button("Abrir pasta de logs", scale=1)
                 log_processo   = gr.Textbox(label="Log",      interactive=False, lines=10, elem_classes="output-log")
                 relatorio_out  = gr.Textbox(label="Relatório", interactive=False, lines=10, elem_classes="output-log")
 
@@ -769,7 +910,7 @@ def criar_interface():
 
                 with gr.Row(visible=False, elem_classes="btn-detectar") as painel_enviar_legenda:
                     opcoes_clipes = gr.Dropdown(choices=[], label="Escolha um clipe gerado para legendar:", scale=3)
-                    btn_enviar_legenda = gr.Button("🎨 ENVIAR CLIP PARA LEGENDAS", scale=2)
+                    btn_enviar_legenda = gr.Button("ENVIAR CLIPE PARA LEGENDAS", scale=2)
 
                 # Eventos — Corte
                 btn_detectar.click(
@@ -812,7 +953,7 @@ def criar_interface():
             # ══════════════════════════════════════════════════════════════
             # TAB 2 — LEGENDAS ANIMADAS
             # ══════════════════════════════════════════════════════════════
-            with gr.Tab("🎨  Legendas Animadas", id="tab_legendas"):
+            with gr.Tab("Legendas Animadas", id="tab_legendas"):
 
                 gr.HTML('<p class="sec">01 — Importar Vídeo</p>')
                 gr.Markdown("*Envie qualquer vídeo ou aponte para uma pasta com vídeos já cortados.*")
@@ -827,7 +968,7 @@ def criar_interface():
                         value=os.path.join(os.path.expanduser("~"), "Desktop", "viral-clipes"),
                         scale=3,
                     )
-                    btn_escanear = gr.Button("📂  ESCANEAR", scale=1, elem_classes="btn-detectar")
+                    btn_escanear = gr.Button("ESCANEAR", scale=1, elem_classes="btn-detectar")
 
                 leg_scan_log = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
                 leg_video_select = gr.Dropdown(
@@ -846,12 +987,12 @@ def criar_interface():
                     )
                     leg_modelo = gr.Dropdown(
                         choices=list(MODELOS_WHISPER.keys()),
-                        value="small  — Rápido na GPU ⭐",
+                        value="small  — Rápido na GPU (recomendado)",
                         label="Modelo Whisper", scale=1,
                     )
 
                 with gr.Row(elem_classes="btn-detectar"):
-                    btn_obter_transcricao = gr.Button("🎙️  1. GERAR / CARREGAR TRANSCRIÇÃO", scale=1)
+                    btn_obter_transcricao = gr.Button("1. GERAR OU CARREGAR TRANSCRIÇÃO", scale=1)
 
                 leg_trans_log = gr.Textbox(label="Log da Transcrição", interactive=False, lines=4, elem_classes="output-log")
 
@@ -866,7 +1007,7 @@ def criar_interface():
                         interactive=True,
                     )
                     with gr.Row():
-                        btn_exportar_srt = gr.Button("💾 Exportar SRT", scale=1)
+                        btn_exportar_srt = gr.Button("Exportar SRT", scale=1)
                         export_srt_log = gr.Textbox(label="", interactive=False, scale=2)
 
                 with gr.Group(visible=False) as painel_render_leg:
@@ -906,7 +1047,7 @@ def criar_interface():
 
                     gr.HTML('<div style="height:16px"></div>')
                     with gr.Row(elem_classes="btn-legendar"):
-                        btn_renderizar = gr.Button("🎨  2. APLICAR LEGENDAS (RENDERIZAR)", scale=1)
+                        btn_renderizar = gr.Button("2. APLICAR LEGENDAS E RENDERIZAR", scale=1)
 
                     gr.HTML('<p class="sec" style="margin-top:28px">06 — Resultado</p>')
                     leg_log = gr.Textbox(label="Log do Processamento", interactive=False, lines=8, elem_classes="output-log")
@@ -914,9 +1055,9 @@ def criar_interface():
                     gr.HTML('<p class="sec">07 — Preview</p>')
                     leg_preview = gr.Gallery(label="", show_label=False, columns=2, height=400, object_fit="contain")
 
-                gr.HTML('''<p style="font-family:Space Mono,monospace;font-size:10px;color:#555;margin-top:12px;text-align:center;">
+                gr.HTML('''<p class="helper-note">
                     Requer Node.js instalado. Na primeira vez, instala o Remotion automaticamente (~30s).<br>
-                    🎵 Módulo de música com sincronização de batida — em breve.
+                    Módulo de música com sincronização de batida — em breve.
                 </p>''')
 
                 # Eventos — Legendas
@@ -982,6 +1123,7 @@ if __name__ == "__main__":
     app.launch(
         server_name="127.0.0.1",
         server_port=porta,
+        css=CSS,
         inbrowser=os.environ.get("VIRAL_CUTTER_NO_BROWSER") != "1",
         share=False,
         allowed_paths=[
