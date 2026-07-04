@@ -51,6 +51,12 @@ TEMPO_FALA_EXCLUSIVA_PARA_SOLO = 3.0  # segundos
 # Tempo mínimo que o SPLIT persiste depois que os dois param de falar
 PERSISTENCIA_SPLIT = 2.0  # segundos
 
+# Tempo máximo contínuo em SOLO numa cena de 2 pessoas antes de voltar ao
+# SPLIT. Numa conversa, mostrar os dois periodicamente é o certo mesmo em
+# monólogo — e protege contra o detector de fala que só enxerga um lado
+# (rosto pequeno/perfil nunca registra fala e o SOLO travava até o fim).
+TEMPO_MAXIMO_SOLO_EM_DUPLA = 8.0  # segundos
+
 # Diferença média de pixels (0-255) entre frames para considerar corte de cena
 LIMIAR_CORTE_CENA = 28.0
 
@@ -448,16 +454,38 @@ def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
         return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
                 "lado_a_y": centro_y, "lado_b_y": centro_y}
 
-    # Duas ou mais pessoas: divide no maior salto entre posições vizinhas
-    saltos = [(xs[i + 1] - xs[i], i) for i in range(len(xs) - 1)]
-    _, idx_divisao = max(saltos)
+    # Agrupa posições vizinhas (salto > 0.15 abre novo cluster). Com 3+
+    # clusters, mantém os 2 com MAIS detecções nas amostras: pessoas reais
+    # aparecem em quase todos os frames amostrados; um rosto na TV do
+    # cenário aparece esporadicamente. Antes, um único falso positivo
+    # central virava "lado B" e o painel do split mirava na TV.
+    clusters = [[pares[0]]]
+    for par in pares[1:]:
+        if par[0] - clusters[-1][-1][0] > 0.15:
+            clusters.append([par])
+        else:
+            clusters[-1].append(par)
+
+    if len(clusters) > 2:
+        clusters.sort(key=len, reverse=True)
+        clusters = clusters[:2]
+        clusters.sort(key=lambda c: c[0][0])  # reordena esquerda→direita
+
+    def _mediana(cluster, idx):
+        return float(np.median([p[idx] for p in cluster]))
+
+    if len(clusters) == 1:
+        centro = _mediana(clusters[0], 0)
+        centro_y = float(np.clip(_mediana(clusters[0], 1), 0.15, 0.55))
+        return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
+                "lado_a_y": centro_y, "lado_b_y": centro_y}
 
     return {
         "n_pessoas": 2,
-        "lado_a": float(np.median(xs[: idx_divisao + 1])),
-        "lado_b": float(np.median(xs[idx_divisao + 1 :])),
-        "lado_a_y": float(np.clip(np.median(ys[: idx_divisao + 1]), 0.15, 0.55)),
-        "lado_b_y": float(np.clip(np.median(ys[idx_divisao + 1 :]), 0.15, 0.55)),
+        "lado_a": _mediana(clusters[0], 0),
+        "lado_b": _mediana(clusters[1], 0),
+        "lado_a_y": float(np.clip(_mediana(clusters[0], 1), 0.15, 0.55)),
+        "lado_b_y": float(np.clip(_mediana(clusters[1], 1), 0.15, 0.55)),
     }
 
 
@@ -534,6 +562,7 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
         frames_para_solo = max(1, int(fps * TEMPO_FALA_EXCLUSIVA_PARA_SOLO))
         frames_persistencia_split = max(1, int(fps * PERSISTENCIA_SPLIT))
         min_frames_modo = max(1, int(fps * DURACAO_MINIMA_MODO))
+        frames_max_solo = max(1, int(fps * TEMPO_MAXIMO_SOLO_EM_DUPLA))
 
         modo_atual = "SPLIT"  # começa mostrando os dois
         frame_ultimo_corte = ini
@@ -604,6 +633,16 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                 elif (f - ultimo_frame_ambos_falaram) < frames_persistencia_split and passou_min_modo:
                     modo_atual = "SPLIT"
                     frame_ultimo_corte = f
+                elif (f - frame_ultimo_corte) >= frames_max_solo:
+                    # SOLO longo demais numa cena de 2 pessoas: volta a mostrar
+                    # os dois. Sem isso, o viés do detector de fala (só registra
+                    # o rosto grande) travava o SOLO até o fim da cena.
+                    modo_atual = "SPLIT"
+                    frame_ultimo_corte = f
+                    # Zera os contadores: sem isso a fala contínua do mesmo
+                    # lado derrubava o SPLIT de volta pro SOLO em 1.5s.
+                    contagem_fala_exclusiva_a = 0
+                    contagem_fala_exclusiva_b = 0
 
             plano[f] = {"modo": modo_atual, "xa": xa, "xb": xb, "ya": ya, "yb": yb}
 

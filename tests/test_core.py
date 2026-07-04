@@ -12,7 +12,7 @@ from cortes import (
     refinar_limites_com_palavras,
     validar_hook,
 )
-from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop
+from enquadramento import _agrupar_posicoes_cena, _calcular_x_crop, _gerar_plano
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
 from rostos import (
@@ -123,6 +123,42 @@ class TestCore(unittest.TestCase):
     def test_duas_pessoas_sao_separadas(self):
         grupo = _agrupar_posicoes_cena([0.2, 0.22, 0.78, 0.8])
         self.assertEqual(grupo["n_pessoas"], 2)
+
+    def test_rosto_esporadico_na_tv_nao_vira_lado(self):
+        # Duas pessoas nas bordas aparecem em quase todas as amostras;
+        # um rosto na TV central aparece uma vez só — não pode virar lado B.
+        xs = [0.10, 0.11, 0.10, 0.12, 0.53, 0.88, 0.87, 0.89, 0.88]
+        grupo = _agrupar_posicoes_cena(xs)
+        self.assertEqual(grupo["n_pessoas"], 2)
+        self.assertAlmostEqual(grupo["lado_a"], 0.11, delta=0.03)
+        self.assertAlmostEqual(grupo["lado_b"], 0.88, delta=0.03)
+
+    def test_solo_nao_trava_quando_so_um_lado_registra_fala(self):
+        # Cena de 2 pessoas em que o detector de fala só enxerga o lado B
+        # (rosto pequeno/perfil nunca registra) — o SOLO_B não pode durar
+        # até o fim da cena: precisa voltar ao SPLIT periodicamente.
+        fps = 30.0
+        total = 900  # 30s
+        cenas = [{
+            "frame_ini": 0, "frame_fim": total, "n_pessoas": 2,
+            "lado_a": 0.10, "lado_b": 0.60,
+            "lado_a_y": 0.40, "lado_b_y": 0.40,
+        }]
+        posicoes = [0.60] * total  # toda fala atribuída ao lado B
+        plano = _gerar_plano(cenas, posicoes, fps, total)
+        modos = [p["modo"] for p in plano]
+        self.assertIn("SOLO_B", modos)  # fala exclusiva leva ao solo
+        # Depois do primeiro solo, o split volta em algum momento
+        primeiro_solo = modos.index("SOLO_B")
+        self.assertIn("SPLIT", modos[primeiro_solo:])
+        # E nenhum trecho contínuo de SOLO passa do teto configurado
+        max_seguidos = seguidos = 0
+        for m in modos:
+            seguidos = seguidos + 1 if m == "SOLO_B" else 0
+            max_seguidos = max(max_seguidos, seguidos)
+        import enquadramento
+        teto = int(fps * enquadramento.TEMPO_MAXIMO_SOLO_EM_DUPLA) + int(fps)
+        self.assertLessEqual(max_seguidos, teto)
 
     def test_encoder_tem_codec_definido(self):
         argumentos = argumentos_encoder()
