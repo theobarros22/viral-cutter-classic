@@ -193,10 +193,11 @@ class TestCore(unittest.TestCase):
         self.assertAlmostEqual(grupo["lado_a"], 0.11, delta=0.03)
         self.assertAlmostEqual(grupo["lado_b"], 0.88, delta=0.03)
 
-    def test_solo_nao_trava_quando_so_um_lado_registra_fala(self):
-        # Cena de 2 pessoas em que o detector de fala só enxerga o lado B
-        # (rosto pequeno/perfil nunca registra) — o SOLO_B não pode durar
-        # até o fim da cena: precisa voltar ao SPLIT periodicamente.
+    def test_duas_pessoas_segue_quem_fala_nao_posicao_de_rosto(self):
+        # Cena de 2+ pessoas ignora lado_a/lado_b (posição de rosto por
+        # cena podia mirar num objeto decorativo — ver seção 10/11 do
+        # RELATORIO_COMPLETO_2026-07-03.md). O alvo do crop é a posição de
+        # QUEM FALA, mesmo que ela não bata com lado_a nem lado_b.
         fps = 30.0
         total = 900  # 30s
         cenas = [{
@@ -204,21 +205,25 @@ class TestCore(unittest.TestCase):
             "lado_a": 0.10, "lado_b": 0.60,
             "lado_a_y": 0.40, "lado_b_y": 0.40,
         }]
-        posicoes = [0.60] * total  # toda fala atribuída ao lado B
+        posicoes = [0.72] * total  # fala detectada numa posição real, fora de lado_a/lado_b
         plano = _gerar_plano(cenas, posicoes, fps, total)
-        modos = [p["modo"] for p in plano]
-        self.assertIn("SOLO_B", modos)  # fala exclusiva leva ao solo
-        # Depois do primeiro solo, o split volta em algum momento
-        primeiro_solo = modos.index("SOLO_B")
-        self.assertIn("SPLIT", modos[primeiro_solo:])
-        # E nenhum trecho contínuo de SOLO passa do teto configurado
-        max_seguidos = seguidos = 0
-        for m in modos:
-            seguidos = seguidos + 1 if m == "SOLO_B" else 0
-            max_seguidos = max(max_seguidos, seguidos)
-        import enquadramento
-        teto = int(fps * enquadramento.TEMPO_MAXIMO_SOLO_EM_DUPLA) + int(fps)
-        self.assertLessEqual(max_seguidos, teto)
+        xs = {round(p["xa"], 2) for p in plano}
+        self.assertEqual(xs, {0.72})
+
+    def test_duas_pessoas_mantem_ultimo_alvo_no_silencio(self):
+        # Sem fala detectada num trecho, o crop não pula pro centro —
+        # mantém o último alvo válido (evita corte nervoso em pausas).
+        fps = 30.0
+        total = 300  # 10s
+        cenas = [{
+            "frame_ini": 0, "frame_fim": total, "n_pessoas": 2,
+            "lado_a": 0.10, "lado_b": 0.60,
+            "lado_a_y": 0.40, "lado_b_y": 0.40,
+        }]
+        posicoes = [0.72] * 150 + [None] * 150  # fala, depois silêncio
+        plano = _gerar_plano(cenas, posicoes, fps, total)
+        xs = {round(p["xa"], 2) for p in plano}
+        self.assertEqual(xs, {0.72})
 
     def test_encoder_tem_codec_definido(self):
         argumentos = argumentos_encoder()

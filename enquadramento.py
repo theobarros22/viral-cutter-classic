@@ -17,13 +17,21 @@ Agora o fluxo é:
 3. Decide o modo por cena:
    - 0 rostos  → CENTRAL (é B-roll / plano de corte, sem gente mesmo)
    - 1 rosto   → SOLO fixo naquela pessoa
-   - 2+ rostos → alterna SOLO_A / SOLO_B / SPLIT seguindo quem fala
-4. Cortes SECOS, enquadramento estático dentro de cada shot
+   - 2+ rostos → crop segue QUEM ESTÁ FALANDO frame a frame
+4. Cortes SECOS entre cenas; dentro da cena o crop desliza suave atrás
+   de quem fala
 
 Regras mantidas:
-- Nunca corta cabeça — crop sempre centralizado no rosto detectado
-- Split screen: cada metade centralizada em uma pessoa
+- Nunca corta cabeça — crop sempre centralizado no rosto/falante
 - Duração mínima por modo (evita cortes nervosos demais)
+
+Nota (04/07/2026): cenas de 2+ pessoas já tiveram split screen com
+detecção de "lado A/lado B" por POSIÇÃO DE ROSTO (clustering por cena).
+Removido — a mira podia cair num objeto decorativo com formato de rosto
+(busto na estante) em vez de gente de verdade. Agora o alvo do crop vem
+de QUEM FALA (voz + movimento labial, sinal já validado por outra etapa
+do pipeline) — decoração nunca fala, então nunca vira alvo. Histórico
+completo na seção 10/11 do RELATORIO_COMPLETO_2026-07-03.md.
 """
 
 import cv2
@@ -43,21 +51,6 @@ RESOLUCOES = {
     "1080p": (1080, 1920),
     "4k":    (2160, 3840),
 }
-
-# Tempo mínimo num modo antes de cortar (evita cortes rápidos demais)
-DURACAO_MINIMA_MODO = 1.5  # segundos
-
-# Tempo que uma pessoa precisa falar SOZINHA para sair do SPLIT e ir pra SOLO
-TEMPO_FALA_EXCLUSIVA_PARA_SOLO = 3.0  # segundos
-
-# Tempo mínimo que o SPLIT persiste depois que os dois param de falar
-PERSISTENCIA_SPLIT = 2.0  # segundos
-
-# Tempo máximo contínuo em SOLO numa cena de 2 pessoas antes de voltar ao
-# SPLIT. Numa conversa, mostrar os dois periodicamente é o certo mesmo em
-# monólogo — e protege contra o detector de fala que só enxerga um lado
-# (rosto pequeno/perfil nunca registra fala e o SOLO travava até o fim).
-TEMPO_MAXIMO_SOLO_EM_DUPLA = 8.0  # segundos
 
 # Diferença média de pixels (0-255) entre frames para considerar corte de cena
 LIMIAR_CORTE_CENA = 28.0
@@ -83,24 +76,6 @@ MIN_TAMANHO_ROSTO = 0.018
 # ignorado (não descarta a cena inteira).
 ZONA_ROSTO_Y_MIN = 0.30
 ZONA_ROSTO_Y_MAX = 0.72
-
-# Zoom do split screen: fração da ALTURA original que cada painel mostra.
-# 1.0 = comportamento antigo (plano aberto espremido, pessoas minúsculas).
-#
-# META: ~0.35-0.45 (fecha na pessoa, centraliza mesmo com gente na borda
-# do quadro — em 0.62 o crop de quem está em x~0.87 bate no limite do
-# frame e a pessoa fica descentralizada no painel).
-# BLOQUEIO (testado na rodada 10, 04/07/2026): zoom fechado só funciona
-# com mira PRECISA. Hoje a posição do "lado" vem da mediana de rostos
-# detectados por cena, que ainda mistura decoração (busto na estante) e
-# pontos entre as pessoas — com janela estreita, errar 10% de X corta o
-# rosto fora do painel. Fechar o zoom SÓ depois de mirar por quem-fala
-# (decoração nunca fala; é o único sinal 100% confiável).
-ZOOM_SPLIT = 0.62
-
-# Posição vertical do rosto dentro do painel do split (0.42 = rosto fica
-# um pouco acima do centro — regra dos terços)
-POSICAO_ROSTO_PAINEL = 0.42
 
 
 def aplicar_enquadramento(
@@ -165,7 +140,6 @@ def aplicar_enquadramento(
     crop_w_916 = int(altura * 9 / 16)
     if crop_w_916 % 2 != 0:
         crop_w_916 -= 1
-    metade_h = saida_h // 2
 
     cap = cv2.VideoCapture(caminho_entrada)
     if not cap.isOpened():
@@ -207,8 +181,6 @@ def aplicar_enquadramento(
     inicios_cena = {c["frame_ini"] for c in cenas}
     ALPHA_SUAVE = 0.18  # fração da distância percorrida por frame
     x_suave = None
-    xa_suave = None
-    xb_suave = None
 
     def _aproximar(atual, alvo):
         return alvo if atual is None else atual + (alvo - atual) * ALPHA_SUAVE
@@ -230,46 +202,12 @@ def aplicar_enquadramento(
         if frame_idx in inicios_cena:
             x_suave = xa_suave = xb_suave = None
 
-        if modo in ("SOLO_A", "SOLO_B", "CENTRAL"):
-            x_alvo = p["xa"] if modo != "SOLO_B" else p["xb"]
-            x_suave = _aproximar(x_suave, x_alvo)
-            x_crop = _calcular_x_crop(x_suave, largura, crop_w_916)
-            cortado = frame[0:altura, x_crop:x_crop + crop_w_916]
-            frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
-
-        else:  # SPLIT
-            # ZOOM na pessoa: cada painel mostra só uma FRAÇÃO da altura
-            # original (ZOOM_SPLIT), centrada no rosto. Antes o painel
-            # espremía o quadro inteiro — pessoas minúsculas com mesa e tudo.
-            proporcao_metade = saida_w / metade_h
-            crop_h_split = int(altura * ZOOM_SPLIT)
-            split_crop_w = int(crop_h_split * proporcao_metade)
-            if split_crop_w > largura:
-                # Vídeo estreito: usa a largura toda e recalcula a altura
-                split_crop_w = largura
-                crop_h_split = int(split_crop_w / proporcao_metade)
-            if split_crop_w % 2 != 0:
-                split_crop_w -= 1
-            if crop_h_split % 2 != 0:
-                crop_h_split -= 1
-
-            def _painel(x_norm, y_norm):
-                """Recorta a janela do painel centrada no rosto (x, y)."""
-                x_c = _calcular_x_crop(x_norm, largura, split_crop_w)
-                # Rosto fica em POSICAO_ROSTO_PAINEL da altura do painel
-                y_c = int(y_norm * altura - POSICAO_ROSTO_PAINEL * crop_h_split)
-                y_c = max(0, min(altura - crop_h_split, y_c))
-                recorte = frame[y_c:y_c + crop_h_split, x_c:x_c + split_crop_w]
-                return cv2.resize(recorte, (saida_w, metade_h), interpolation=INTERPOLACAO_EXPORT)
-
-            # Suaviza a posição de cada painel (sem tremer dentro da cena)
-            xa_suave = _aproximar(xa_suave, p["xa"])
-            xb_suave = _aproximar(xb_suave, p["xb"])
-            topo = _painel(xa_suave, p.get("ya", 0.40))
-            baixo = _painel(xb_suave, p.get("yb", 0.40))
-
-            frame_final = np.vstack([topo, baixo])
-            frame_final[metade_h - 1:metade_h + 1, :] = [30, 30, 30]
+        # Único modo de crop: 9:16 de 1 alvo. "CENTRAL" (0 ou 2+ pessoas)
+        # usa x=0.5 fixo; "SOLO_A" segue a pessoa única detectada.
+        x_suave = _aproximar(x_suave, p["xa"])
+        x_crop = _calcular_x_crop(x_suave, largura, crop_w_916)
+        cortado = frame[0:altura, x_crop:x_crop + crop_w_916]
+        frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
 
         try:
             processo_ffmpeg.stdin.write(frame_final.tobytes())
@@ -545,14 +483,14 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
 
     - Cena sem pessoas → herda modo/posição da cena anterior (nunca mesa vazia)
     - Cena com 1 pessoa → SOLO_A fixo nela
-    - Cena com 2 lados → SPLIT como padrão, SOLO só com fala exclusiva longa
+    - Cena com 2+ pessoas → segue quem fala frame a frame (ver bloco abaixo)
     """
     plano = [None] * total_frames
 
     Y_PADRAO = 0.40
 
     # Memória da última cena com pessoas — para herdar quando falhar detecção
-    ultimo_modo_valido = "SOLO_A"  # antes era SPLIT 0.5/0.5 (dois painéis iguais)
+    ultimo_modo_valido = "SOLO_A"
     ultimo_xa = 0.5
     ultimo_xb = 0.5
     ultimo_ya = Y_PADRAO
@@ -597,103 +535,25 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                 plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya}
             continue
 
-        # Atualiza memória para cenas com 2 pessoas
-        ultimo_xa = xa
-        ultimo_xb = xb
-        ultimo_ya = ya
-        ultimo_yb = yb
-
-        # ── 2 lados: SPLIT como padrão, SOLO só com fala exclusiva longa ──
-        x_meio = (xa + xb) / 2
-        frames_para_solo = max(1, int(fps * TEMPO_FALA_EXCLUSIVA_PARA_SOLO))
-        frames_persistencia_split = max(1, int(fps * PERSISTENCIA_SPLIT))
-        min_frames_modo = max(1, int(fps * DURACAO_MINIMA_MODO))
-        frames_max_solo = max(1, int(fps * TEMPO_MAXIMO_SOLO_EM_DUPLA))
-
-        modo_atual = "SPLIT"  # começa mostrando os dois
-        frame_ultimo_corte = ini
-        contagem_fala_exclusiva_a = 0
-        contagem_fala_exclusiva_b = 0
-        ultimo_frame_ambos_falaram = ini
-
+        # Duas ou mais pessoas: crop segue QUEM ESTÁ FALANDO (posicoes_falante
+        # — voz + movimento labial, já validado), não a posição de rosto por
+        # cena. A posição de rosto por cena (clustering em "lado A/lado B")
+        # já mirou num objeto decorativo com formato de rosto (busto na
+        # estante); quem-fala é o único sinal 100% confiável — decoração
+        # nunca fala. Sem fala detectada no momento, mantém o último alvo
+        # válido (nunca pula pro centro no meio de uma cena só por silêncio).
+        # Ver seção 10/11 do RELATORIO_COMPLETO_2026-07-03.md.
+        x_alvo_atual = ultimo_xa if ultimo_modo_valido != "CENTRAL" else 0.5
         for f in range(ini, min(fim, total_frames)):
             pos = posicoes_falante[f] if f < len(posicoes_falante) else None
-
             if pos is not None:
-                fala_a = pos < x_meio
-                fala_b = pos >= x_meio
-            else:
-                fala_a = False
-                fala_b = False
+                x_alvo_atual = pos
+            plano[f] = {"modo": "SOLO_A", "xa": x_alvo_atual, "xb": x_alvo_atual,
+                        "ya": Y_PADRAO, "yb": Y_PADRAO}
 
-            # Atualiza contadores de fala exclusiva
-            if fala_a and not fala_b:
-                contagem_fala_exclusiva_a += 1
-                contagem_fala_exclusiva_b = 0
-            elif fala_b and not fala_a:
-                contagem_fala_exclusiva_b += 1
-                contagem_fala_exclusiva_a = 0
-            else:
-                contagem_fala_exclusiva_a = 0
-                contagem_fala_exclusiva_b = 0
-
-            # Checa conversa na janela recente (1s)
-            janela_conversa = max(1, int(fps * 1.0))
-            ini_janela = max(ini, f - janela_conversa)
-            recentes = [
-                posicoes_falante[j]
-                for j in range(ini_janela, min(f + 1, len(posicoes_falante)))
-                if posicoes_falante[j] is not None
-            ]
-            if recentes:
-                tem_esq = any(p < x_meio for p in recentes)
-                tem_dir = any(p >= x_meio for p in recentes)
-                if tem_esq and tem_dir:
-                    ultimo_frame_ambos_falaram = f
-
-            # Decide o modo
-            if modo_atual == "SPLIT":
-                passou_persistencia = (f - ultimo_frame_ambos_falaram) >= frames_persistencia_split
-                passou_min_modo = (f - frame_ultimo_corte) >= min_frames_modo
-
-                if contagem_fala_exclusiva_a >= frames_para_solo and passou_persistencia and passou_min_modo:
-                    modo_atual = "SOLO_A"
-                    frame_ultimo_corte = f
-                    contagem_fala_exclusiva_a = 0
-                elif contagem_fala_exclusiva_b >= frames_para_solo and passou_persistencia and passou_min_modo:
-                    modo_atual = "SOLO_B"
-                    frame_ultimo_corte = f
-                    contagem_fala_exclusiva_b = 0
-
-            elif modo_atual in ("SOLO_A", "SOLO_B"):
-                passou_min_modo = (f - frame_ultimo_corte) >= min_frames_modo
-
-                if modo_atual == "SOLO_A" and contagem_fala_exclusiva_b > 0 and passou_min_modo:
-                    modo_atual = "SPLIT"
-                    frame_ultimo_corte = f
-                    ultimo_frame_ambos_falaram = f
-                elif modo_atual == "SOLO_B" and contagem_fala_exclusiva_a > 0 and passou_min_modo:
-                    modo_atual = "SPLIT"
-                    frame_ultimo_corte = f
-                    ultimo_frame_ambos_falaram = f
-                elif (f - ultimo_frame_ambos_falaram) < frames_persistencia_split and passou_min_modo:
-                    modo_atual = "SPLIT"
-                    frame_ultimo_corte = f
-                elif (f - frame_ultimo_corte) >= frames_max_solo:
-                    # SOLO longo demais numa cena de 2 pessoas: volta a mostrar
-                    # os dois. Sem isso, o viés do detector de fala (só registra
-                    # o rosto grande) travava o SOLO até o fim da cena.
-                    modo_atual = "SPLIT"
-                    frame_ultimo_corte = f
-                    # Zera os contadores: sem isso a fala contínua do mesmo
-                    # lado derrubava o SPLIT de volta pro SOLO em 1.5s.
-                    contagem_fala_exclusiva_a = 0
-                    contagem_fala_exclusiva_b = 0
-
-            plano[f] = {"modo": modo_atual, "xa": xa, "xb": xb, "ya": ya, "yb": yb}
-
-        # Salva o modo final desta cena pra herança
-        ultimo_modo_valido = modo_atual
+        ultimo_modo_valido = "SOLO_A"
+        ultimo_xa = ultimo_xb = x_alvo_atual
+        ultimo_ya = ultimo_yb = Y_PADRAO
 
     # Preenche buracos — usa último modo válido, nunca CENTRAL
     ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
