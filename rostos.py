@@ -28,6 +28,16 @@ LOGGER = logging.getLogger("ViralCutter.rostos")
 # compressão/iluminação, não fala real — comum quando um microfone de mesa
 # cobre a boca e a região analisada mal muda de um frame pro outro.
 LIMIAR_MOVIMENTO_LABIAL = 4.0
+NOME_MODELO_SFACE = "face_recognition_sface_2021dec_int8bq.onnx"
+URL_MODELO_SFACE = (
+    "https://github.com/opencv/opencv_zoo/raw/refs/heads/main/"
+    "models/face_recognition_sface/face_recognition_sface_2021dec_int8bq.onnx"
+)
+# Os recortes vêm do MediaPipe (sem os cinco marcos usados pelo alinhamento
+# nativo do SFace). Em vídeo real, perfis da mesma pessoa ficam por volta de
+# 0.50; 0.55 separava a mesma pessoa em duas identidades. O recorte facial
+# justo reduz a influência do cenário e permite este limiar conservador.
+LIMIAR_IDENTIDADE_SFACE = 0.47
 
 
 def _print_seguro(mensagem) -> None:
@@ -158,10 +168,17 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
 
                 recorte = frame[y1:y2, x1:x2]
                 if recorte.size > 0:
+                    rosto_x1 = max(0, int(x_centro - w_rosto * 0.55))
+                    rosto_y1 = max(0, int(y_centro - h_rosto * 0.55))
+                    rosto_x2 = min(largura, int(x_centro + w_rosto * 0.55))
+                    rosto_y2 = min(altura, int(y_centro + h_rosto * 0.55))
                     deteccoes.append({
                         "posicao_x": rosto["x"],
                         "posicao_y": rosto["y"],
+                        "fonte": rosto.get("fonte", "mediapipe"),
+                        "confianca": rosto.get("confianca", 0.0),
                         "recorte": recorte,
+                        "recorte_identidade": frame[rosto_y1:rosto_y2, rosto_x1:rosto_x2],
                         "frame_idx": int(frame_idx),
                     })
 
@@ -192,10 +209,17 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                             y2 = min(altura, int(y_centro + h_rosto))
                             recorte = frame[y1:y2, x1:x2]
                             if recorte.size > 0:
+                                rosto_x1 = max(0, int(x_centro - w_rosto * 0.55))
+                                rosto_y1 = max(0, int(y_centro - h_rosto * 0.55))
+                                rosto_x2 = min(largura, int(x_centro + w_rosto * 0.55))
+                                rosto_y2 = min(altura, int(y_centro + h_rosto * 0.55))
                                 deteccoes.append({
                                     "posicao_x": rosto["x"],
                                     "posicao_y": rosto["y"],
+                                    "fonte": rosto.get("fonte", "mediapipe"),
+                                    "confianca": rosto.get("confianca", 0.0),
                                     "recorte": recorte,
+                                    "recorte_identidade": frame[rosto_y1:rosto_y2, rosto_x1:rosto_x2],
                                     "frame_idx": frame_idx,
                                 })
                 frame_idx += 1
@@ -208,14 +232,215 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
             except OSError:
                 pass
 
+    reconhecedor = _inicializar_reconhecedor_facial()
+    deteccoes = _filtrar_candidatos_pessoas(
+        deteccoes,
+        amostras_reais,
+        exigir_persistencia_por_lado=(reconhecedor is None),
+    )
     if not deteccoes:
         _print_seguro("⚠️ Nenhum rosto detectado.")
         return []
 
-    # Agrupa rostos por posição X (esquerda vs direita)
-    pessoas = _agrupar_por_posicao(deteccoes)
+    # Com SFace, a mesma pessoa continua sendo uma identidade mesmo quando
+    # cortes de câmera a movem da esquerda para o centro ou para a direita.
+    pessoas = (
+        _agrupar_por_identidade(deteccoes, reconhecedor, amostras_reais)
+        if reconhecedor is not None
+        else _agrupar_por_posicao(deteccoes)
+    )
 
     _print_seguro(f"✅ {len(pessoas)} pessoa(s) identificada(s) no vídeo.")
+    return pessoas
+
+
+def _filtrar_candidatos_pessoas(
+    deteccoes: list,
+    total_amostras: int,
+    exigir_persistencia_por_lado: bool = True,
+) -> list:
+    """Remove objetos do cenário antes de criar a lista de participantes.
+
+    Uma pessoa real precisa aparecer em mais de um frame e, em podcasts,
+    normalmente tem o centro do rosto entre 28% e 78% da altura. TV, bustos
+    em estante e objetos sobre a mesa costumam ficar fora dessa faixa.
+
+    Se a composição for atípica, detecções confirmadas pelo MediaPipe ainda
+    são aceitas; o Haar, mais sujeito a falsos positivos, nunca é usado fora
+    da zona humana sem confirmação do MediaPipe.
+    """
+    if not deteccoes:
+        return []
+
+    na_zona = [d for d in deteccoes if 0.28 <= float(d.get("posicao_y", 0.5)) <= 0.78]
+    if na_zona:
+        candidatos = na_zona
+    else:
+        candidatos = [d for d in deteccoes if d.get("fonte", "mediapipe") != "haar"]
+
+    if not candidatos:
+        return []
+
+    if not exigir_persistencia_por_lado:
+        return candidatos
+
+    minimo_frames = max(2, min(4, int(np.ceil(max(1, total_amostras) * 0.10))))
+    por_lado = {"esquerda": [], "centro": [], "direita": []}
+    for det in candidatos:
+        x = float(det["posicao_x"])
+        lado = "esquerda" if x < 0.4 else ("direita" if x > 0.6 else "centro")
+        por_lado[lado].append(det)
+
+    confirmados = []
+    for detecs in por_lado.values():
+        frames_distintos = {int(d.get("frame_idx", -1)) for d in detecs}
+        fontes = {d.get("fonte", "mediapipe") for d in detecs}
+        minimo = minimo_frames + (1 if fontes == {"haar"} else 0)
+        if len(frames_distintos) >= minimo:
+            confirmados.extend(detecs)
+
+    return confirmados
+
+
+def _caminho_modelo_reconhecimento() -> str:
+    pasta = os.path.join(pasta_dados(), "models")
+    os.makedirs(pasta, exist_ok=True)
+    return os.path.join(pasta, NOME_MODELO_SFACE)
+
+
+def _inicializar_reconhecedor_facial():
+    """Carrega o SFace oficial do OpenCV; falha silenciosamente para fallback."""
+    if not hasattr(cv2, "FaceRecognizerSF"):
+        return None
+
+    caminho = _caminho_modelo_reconhecimento()
+    if not os.path.isfile(caminho) or os.path.getsize(caminho) < 1_000_000:
+        try:
+            import urllib.request
+            _print_seguro("   Baixando modelo de reconhecimento facial (10 MB)...")
+            temporario = caminho + ".download"
+            urllib.request.urlretrieve(URL_MODELO_SFACE, temporario)
+            os.replace(temporario, caminho)
+        except Exception as erro:
+            LOGGER.warning("SFace indisponível; usando agrupamento por posição: %s", erro)
+            try:
+                if os.path.exists(caminho + ".download"):
+                    os.remove(caminho + ".download")
+            except OSError:
+                pass
+            return None
+
+    try:
+        return cv2.FaceRecognizerSF.create(caminho, "")
+    except Exception as erro:
+        LOGGER.warning("Falha ao carregar SFace; usando agrupamento por posição: %s", erro)
+        return None
+
+
+def _extrair_embedding_facial(recorte, reconhecedor):
+    try:
+        rosto = cv2.resize(recorte, (112, 112), interpolation=cv2.INTER_AREA)
+        embedding = reconhecedor.feature(rosto)
+        if embedding is None or not np.isfinite(embedding).all():
+            return None
+        return embedding
+    except Exception as erro:
+        LOGGER.debug("Falha ao extrair embedding facial: %s", erro)
+        return None
+
+
+def _escolher_melhor_preview(deteccoes: list):
+    """Escolhe um rosto nítido sem favorecer caixas gigantes ou vazias."""
+    areas = np.array([
+        d.get("recorte_identidade", d["recorte"]).shape[0]
+        * d.get("recorte_identidade", d["recorte"]).shape[1]
+        for d in deteccoes
+    ], dtype=np.float32)
+    area_mediana = float(np.median(areas)) if len(areas) else 0.0
+    candidatos = []
+    for det, area in zip(deteccoes, areas):
+        rosto = det.get("recorte_identidade", det["recorte"])
+        if rosto.size == 0:
+            continue
+        # Caixas multiescala aberrantes costumam ser muito maiores que as
+        # demais e conter cenário preto em vez do participante.
+        if area_mediana and not (area_mediana * 0.45 <= area <= area_mediana * 2.20):
+            continue
+        cinza = cv2.cvtColor(rosto, cv2.COLOR_BGR2GRAY)
+        contraste = float(cinza.std())
+        nitidez = float(cv2.Laplacian(cinza, cv2.CV_64F).var())
+        if contraste >= 8.0:
+            confianca = max(0.20, float(det.get("confianca", 0.0)))
+            qualidade = nitidez * max(0.25, contraste / 32.0) * (confianca ** 2)
+            candidatos.append((qualidade, det))
+    if candidatos:
+        return max(candidatos, key=lambda item: item[0])[1]
+    return max(deteccoes, key=lambda d: d["recorte"].shape[0] * d["recorte"].shape[1])
+
+
+def _agrupar_por_identidade(
+    deteccoes: list,
+    reconhecedor,
+    total_amostras: int,
+    limiar: float = LIMIAR_IDENTIDADE_SFACE,
+) -> list:
+    """Agrupa rostos pelo embedding SFace, independentemente da câmera/lado."""
+    grupos = []
+    for det in sorted(deteccoes, key=lambda d: int(d.get("frame_idx", 0))):
+        recorte_identidade = det.get("recorte_identidade", det["recorte"])
+        embedding = _extrair_embedding_facial(recorte_identidade, reconhecedor)
+        if embedding is None:
+            continue
+
+        melhor_grupo = None
+        melhor_score = -1.0
+        frame_idx = int(det.get("frame_idx", -1))
+        for grupo in grupos:
+            # Duas faces no mesmo frame são necessariamente pessoas distintas.
+            if frame_idx in grupo["frames"]:
+                continue
+            score = max(
+                float(reconhecedor.match(embedding, existente, cv2.FaceRecognizerSF_FR_COSINE))
+                for existente in grupo["embeddings"]
+            )
+            if score > melhor_score:
+                melhor_score = score
+                melhor_grupo = grupo
+
+        if melhor_grupo is not None and melhor_score >= limiar:
+            melhor_grupo["deteccoes"].append(det)
+            melhor_grupo["frames"].add(frame_idx)
+            # Limita memória sem perder variedade de poses.
+            if len(melhor_grupo["embeddings"]) < 8:
+                melhor_grupo["embeddings"].append(embedding)
+        else:
+            grupos.append({
+                "deteccoes": [det],
+                "embeddings": [embedding],
+                "frames": {frame_idx},
+            })
+
+    minimo_frames = max(2, min(4, int(np.ceil(max(1, total_amostras) * 0.10))))
+    grupos = [g for g in grupos if len(g["frames"]) >= minimo_frames]
+    grupos.sort(key=lambda g: float(np.mean([d["posicao_x"] for d in g["deteccoes"]])))
+
+    pessoas = []
+    for grupo in grupos:
+        detecs = grupo["deteccoes"]
+        melhor = _escolher_melhor_preview(detecs)
+        preview = cv2.resize(melhor["recorte"], (200, 200), interpolation=cv2.INTER_LANCZOS4)
+        _, buffer = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        pos_x_media = float(np.mean([d["posicao_x"] for d in detecs]))
+        lado = "esquerda" if pos_x_media < 0.4 else ("direita" if pos_x_media > 0.6 else "centro")
+        pessoas.append({
+            "id": len(pessoas),
+            "nome": f"Pessoa {len(pessoas) + 1} ({lado})",
+            "posicao_x": pos_x_media,
+            "lado": lado,
+            "preview_base64": base64.b64encode(buffer).decode("utf-8"),
+            "n_aparicoes": len(detecs),
+            "recorte_cv2": preview,
+        })
     return pessoas
 
 
@@ -598,36 +823,29 @@ def detectar_rostos_robusto(frame, detector) -> list:
     3. Metades esquerda/direita ampliadas 3x em largura E altura
        (pessoas coladas nas bordas, longe do centro)
 
-    Só se as 3 tentativas falharem, cai pro Haar cascade (OpenCV) como
-    último recurso. Antes o Haar rodava DENTRO de cada tentativa (embutido
-    em _detectar_rostos_frame via o detector "combinado") e disparava já
-    na tentativa 1 sempre que o MediaPipe não achava nada no frame
-    original — o que é o caso comum em plano aberto. Isso impedia as
-    tentativas 2/3 de rodar (a função já tinha retornado) e o resultado
-    final vinha do Haar, que confunde padrões repetitivos do cenário
-    (parede texturizada, estante com estatueta em forma de rosto) com
-    rostos reais — com bastante confiança e de forma consistente, virando
-    um "lado" inteiro do split screen mirando em decoração.
+    O Haar cascade (OpenCV) só é usado se o MediaPipe não estiver disponível.
+    Quando o MediaPipe funciona mas não acha ninguém após todas as escalas,
+    o resultado correto é vazio. O Haar confunde padrões do cenário (parede,
+    TV, estatueta) com rostos e já gerou enquadramentos mirando em decoração.
 
     Retorna lista no mesmo formato de _detectar_rostos_frame
     (coordenadas normalizadas 0-1 relativas ao frame ORIGINAL).
     """
     mp_detector = detector.get("mediapipe") if isinstance(detector, dict) else detector
 
-    # Tentativa 1 — frame original, MediaPipe puro
-    rostos = _detectar_rostos_frame(frame, mp_detector) if mp_detector else []
-    if rostos:
-        return rostos
-
     h, w = frame.shape[:2]
+    resultado_mp = []
+
+    # Tentativa 1 — frame original, MediaPipe puro. Não retorna cedo: uma
+    # pessoa próxima pode aparecer aqui enquanto outra, menor, só surge no zoom.
+    if mp_detector:
+        resultado_mp.extend(_detectar_rostos_frame(frame, mp_detector))
 
     # Tentativa 2 — amplia o frame 2x (coordenadas normalizadas não mudam)
     if mp_detector:
         try:
             ampliado = cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
-            rostos = _detectar_rostos_frame(ampliado, mp_detector)
-            if rostos:
-                return rostos
+            resultado_mp.extend(_detectar_rostos_frame(ampliado, mp_detector))
         except Exception:
             pass
 
@@ -646,19 +864,29 @@ def detectar_rostos_robusto(frame, detector) -> list:
                 detectados = _detectar_rostos_frame(metade_grande, mp_detector)
                 for r in detectados:
                     # Converte coordenadas da metade de volta para o frame inteiro
-                    resultado.append({
+                    convertido = {
                         "x": offset_x + r["x"] * 0.5,
                         "y": r["y"],
                         "w": r["w"] * 0.5,
                         "h": r["h"],
-                    })
-            if resultado:
-                return resultado
+                        "fonte": r.get("fonte", "mediapipe"),
+                        "confianca": r.get("confianca", 0.0),
+                    }
+                    resultado.append(convertido)
+            resultado_mp.extend(resultado)
         except Exception:
             pass
 
-    # Último recurso: Haar cascade (OpenCV). Mais ruidoso que o MediaPipe,
-    # mas melhor que nada quando as 3 tentativas de MediaPipe falham.
+    resultado_mp = _limpar_deteccoes(resultado_mp)
+    if resultado_mp:
+        return resultado_mp
+
+    # MediaPipe respondeu normalmente, mas não encontrou rosto em nenhuma
+    # escala. Não substitui esse resultado por um palpite ruidoso do Haar.
+    if mp_detector is not None:
+        return []
+
+    # Último recurso apenas quando o MediaPipe nem sequer pôde ser carregado.
     haar = detector.get("haar") if isinstance(detector, dict) else None
     return _detectar_rostos_haar(frame, haar) if haar is not None else []
 
@@ -691,6 +919,8 @@ def _detectar_rostos_frame(frame, detector) -> list:
                         "y": (bbox.origin_y + bbox.height / 2) / h,
                         "w": bbox.width / w,
                         "h": bbox.height / h,
+                        "fonte": "mediapipe",
+                        "confianca": float(det.categories[0].score) if det.categories else 0.0,
                     })
         elif isinstance(detector, dict) and detector.get("tipo") == "antigo":
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -703,6 +933,8 @@ def _detectar_rostos_frame(frame, detector) -> list:
                         "y": bbox.ymin + bbox.height / 2,
                         "w": bbox.width,
                         "h": bbox.height,
+                        "fonte": "mediapipe",
+                        "confianca": float(det.score[0]) if det.score else 0.0,
                     })
         else:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -715,6 +947,8 @@ def _detectar_rostos_frame(frame, detector) -> list:
                         "y": bbox.ymin + bbox.height / 2,
                         "w": bbox.width,
                         "h": bbox.height,
+                        "fonte": "mediapipe",
+                        "confianca": float(det.score[0]) if det.score else 0.0,
                     })
     except Exception as erro:
         LOGGER.warning("Erro durante detecção facial: %s", erro)
@@ -742,6 +976,8 @@ def _detectar_rostos_haar(frame, classificador) -> list:
                 "y": (y + altura / 2) / h,
                 "w": largura / w,
                 "h": altura / h,
+                "fonte": "haar",
+                "confianca": 0.0,
             }
             for x, y, largura, altura in caixas
         ])
@@ -753,18 +989,44 @@ def _detectar_rostos_haar(frame, classificador) -> list:
 def _limpar_deteccoes(rostos: list) -> list:
     """Remove caixas inválidas e duplicadas produzidas pelos fallbacks."""
     resultado = []
-    for rosto in rostos:
+    ordenados = sorted(
+        rostos,
+        key=lambda r: (float(r.get("confianca", 0.0)), float(r.get("w", 0.0)) * float(r.get("h", r.get("w", 0.0)))),
+        reverse=True,
+    )
+    for rosto in ordenados:
         limpo = {
             "x": max(0.0, min(1.0, float(rosto["x"]))),
             "y": max(0.0, min(1.0, float(rosto["y"]))),
             "w": max(0.0, min(1.0, float(rosto["w"]))),
             "h": max(0.0, min(1.0, float(rosto.get("h", rosto["w"])))),
+            "fonte": rosto.get("fonte", "desconhecida"),
+            "confianca": float(rosto.get("confianca", 0.0)),
         }
         if limpo["w"] <= 0 or limpo["h"] <= 0:
             continue
-        if any(abs(limpo["x"] - existente["x"]) < 0.04 and
-               abs(limpo["y"] - existente["y"]) < 0.04 for existente in resultado):
+        if any(_deteccoes_sobrepostas(limpo, existente) for existente in resultado):
             continue
         resultado.append(limpo)
     return resultado
+
+
+def _deteccoes_sobrepostas(a: dict, b: dict) -> bool:
+    """Considera duplicadas caixas com grande sobreposição ou centro próximo."""
+    ax1, ay1 = a["x"] - a["w"] / 2, a["y"] - a["h"] / 2
+    ax2, ay2 = a["x"] + a["w"] / 2, a["y"] + a["h"] / 2
+    bx1, by1 = b["x"] - b["w"] / 2, b["y"] - b["h"] / 2
+    bx2, by2 = b["x"] + b["w"] / 2, b["y"] + b["h"] / 2
+    inter = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+    uniao = a["w"] * a["h"] + b["w"] * b["h"] - inter
+    iou = inter / uniao if uniao > 0 else 0.0
+    # Em detecção multi-escala, a mesma face pode voltar como uma caixa
+    # grande no frame inteiro e outra menor na metade ampliada. Usa a maior
+    # caixa como referência; pessoas realmente distintas têm centros muito
+    # mais afastados em relação ao próprio tamanho facial.
+    centro_proximo = (
+        abs(a["x"] - b["x"]) < max(0.04, max(a["w"], b["w"]) * 0.50)
+        and abs(a["y"] - b["y"]) < max(0.04, max(a["h"], b["h"]) * 0.40)
+    )
+    return iou >= 0.20 or centro_proximo
 # fim do arquivo — deteccao robusta v2

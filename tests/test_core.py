@@ -24,6 +24,9 @@ from rostos import (
     _caminho_modelo_facial,
     _detectar_movimento_labial,
     _fechar_detector,
+    _filtrar_candidatos_pessoas,
+    _agrupar_por_identidade,
+    _caminho_modelo_reconhecimento,
     _inicializar_detector,
     _limpar_deteccoes,
     detectar_pessoas_no_video,
@@ -33,6 +36,9 @@ import numpy as np
 class TestCore(unittest.TestCase):
     def test_modelo_facial_tem_caminho_persistente(self):
         self.assertTrue(_caminho_modelo_facial().endswith("face_detector.tflite"))
+
+    def test_modelo_de_identidade_tem_caminho_persistente(self):
+        self.assertTrue(_caminho_modelo_reconhecimento().endswith(".onnx"))
 
     def test_detector_principal_inicializa(self):
         detector = _inicializar_detector()
@@ -104,6 +110,55 @@ class TestCore(unittest.TestCase):
         ]
         resultado = _detectar_movimento_labial(frame_atual, frame_anterior, rostos, 200, 200)
         self.assertEqual(resultado, 0.8)
+
+    def test_filtro_de_pessoas_remove_tv_e_deteccao_esporadica(self):
+        deteccoes = [
+            # Pessoa real: aparece em três amostras na zona humana.
+            *[
+                {"posicao_x": 0.16, "posicao_y": 0.46, "frame_idx": f, "fonte": "mediapipe"}
+                for f in (1, 2, 3)
+            ],
+            # Rosto no telão: persistente, mas alto demais no quadro.
+            *[
+                {"posicao_x": 0.52, "posicao_y": 0.12, "frame_idx": f, "fonte": "mediapipe"}
+                for f in (1, 2, 3, 4, 5)
+            ],
+            # Falso positivo isolado dentro da zona.
+            {"posicao_x": 0.84, "posicao_y": 0.48, "frame_idx": 2, "fonte": "haar"},
+        ]
+        filtradas = _filtrar_candidatos_pessoas(deteccoes, total_amostras=30)
+        self.assertEqual({round(d["posicao_x"], 2) for d in filtradas}, {0.16})
+
+    def test_filtro_nao_promove_haar_fora_da_zona_humana(self):
+        deteccoes = [
+            {"posicao_x": 0.5, "posicao_y": 0.14, "frame_idx": f, "fonte": "haar"}
+            for f in range(10)
+        ]
+        self.assertEqual(_filtrar_candidatos_pessoas(deteccoes, 30), [])
+
+    def test_identidade_une_mesma_pessoa_em_lados_diferentes(self):
+        class ReconhecedorFake:
+            def feature(self, imagem):
+                return np.array([[1.0, 0.0]]) if float(imagem.mean()) < 100 else np.array([[0.0, 1.0]])
+
+            def match(self, a, b, _metrica):
+                return float(np.dot(a.ravel(), b.ravel()))
+
+        deteccoes = []
+        for frame, x in ((1, 0.20), (2, 0.50), (3, 0.78)):
+            deteccoes.append({
+                "posicao_x": x, "posicao_y": 0.45, "frame_idx": frame,
+                "recorte": np.full((40, 40, 3), 20, dtype=np.uint8),
+            })
+        for frame, x in ((1, 0.75), (2, 0.70), (3, 0.65)):
+            deteccoes.append({
+                "posicao_x": x, "posicao_y": 0.45, "frame_idx": frame,
+                "recorte": np.full((40, 40, 3), 200, dtype=np.uint8),
+            })
+
+        pessoas = _agrupar_por_identidade(deteccoes, ReconhecedorFake(), total_amostras=6)
+        self.assertEqual(len(pessoas), 2)
+        self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [3, 3])
 
     def test_silencios_viram_intervalos_de_fala_com_respiro(self):
         intervalos = calcular_intervalos_fala(
@@ -235,6 +290,20 @@ class TestCore(unittest.TestCase):
             {"x": 0.31, "y": 0.31, "w": 0.1, "h": 0.1},
         ])
         self.assertEqual(len(rostos), 1)
+
+    def test_deteccoes_multiescala_da_mesma_face_sao_unificadas(self):
+        rostos = _limpar_deteccoes([
+            {"x": 0.51, "y": 0.47, "w": 0.61, "h": 0.61, "confianca": 0.8},
+            {"x": 0.74, "y": 0.46, "w": 0.47, "h": 0.47, "confianca": 0.6},
+        ])
+        self.assertEqual(len(rostos), 1)
+
+    def test_dois_rostos_realmente_separados_nao_sao_unificados(self):
+        rostos = _limpar_deteccoes([
+            {"x": 0.25, "y": 0.45, "w": 0.18, "h": 0.18},
+            {"x": 0.75, "y": 0.45, "w": 0.18, "h": 0.18},
+        ])
+        self.assertEqual(len(rostos), 2)
 
     def test_deteccao_inicial_usa_cinco_minutos(self):
         import inspect
@@ -380,7 +449,26 @@ class TestCore(unittest.TestCase):
         self.assertEqual(len(rostos), 1)
         self.assertAlmostEqual(rostos[0]["x"], 0.1, delta=0.001)
 
-    def test_robusto_cai_no_haar_so_apos_mediapipe_esgotar(self):
+    def test_robusto_combina_rosto_proximo_com_rosto_que_so_aparece_no_zoom(self):
+        detector = {"tipo": "combinado", "mediapipe": {"tipo": "novo"}, "haar": object()}
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+        esquerda = {"x": 0.2, "y": 0.45, "w": 0.10, "h": 0.10, "fonte": "mediapipe"}
+        direita = {"x": 0.8, "y": 0.45, "w": 0.08, "h": 0.08, "fonte": "mediapipe"}
+        respostas = [
+            [esquerda],
+            [esquerda, direita],
+            [{"x": 0.4, "y": 0.45, "w": 0.20, "h": 0.10, "fonte": "mediapipe"}],
+            [{"x": 0.6, "y": 0.45, "w": 0.16, "h": 0.08, "fonte": "mediapipe"}],
+        ]
+        with patch("rostos._detectar_rostos_frame", side_effect=respostas) as mock_mp, \
+                patch("rostos._detectar_rostos_haar") as mock_haar:
+            rostos = detectar_rostos_robusto(frame, detector)
+
+        self.assertEqual(mock_mp.call_count, 4)
+        mock_haar.assert_not_called()
+        self.assertEqual(sorted(round(r["x"], 1) for r in rostos), [0.2, 0.8])
+
+    def test_robusto_nao_inventa_rosto_com_haar_quando_mediapipe_esta_ativo(self):
         detector = {"tipo": "combinado", "mediapipe": {"tipo": "novo"}, "haar": object()}
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
 
@@ -389,6 +477,16 @@ class TestCore(unittest.TestCase):
             rostos = detectar_rostos_robusto(frame, detector)
 
         self.assertEqual(mock_mp.call_count, 4)  # original, 2x, metade-esq, metade-dir
+        mock_haar.assert_not_called()
+        self.assertEqual(rostos, [])
+
+    def test_robusto_usa_haar_se_mediapipe_nao_carregou(self):
+        detector = {"tipo": "combinado", "mediapipe": None, "haar": object()}
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+        esperado = [{"x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1}]
+        with patch("rostos._detectar_rostos_haar", return_value=esperado) as mock_haar:
+            rostos = detectar_rostos_robusto(frame, detector)
+
         mock_haar.assert_called_once()
         self.assertEqual(len(rostos), 1)
 
