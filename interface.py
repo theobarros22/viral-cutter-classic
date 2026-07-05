@@ -86,6 +86,7 @@ PERFIS_PROCESSAMENTO = {
     "Equilibrado — recomendado": "equilibrado",
     "Máxima qualidade — análise detalhada": "qualidade",
 }
+MODO_OFFLINE_PADRAO = not bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 # Legendas
 TEMPLATES_LEGENDA_KEYS = {v: k for k, v in TEMPLATES_LEGENDA.items()}
@@ -824,7 +825,8 @@ def criar_interface():
 
                 modo_offline = gr.Checkbox(
                     label="Modo offline — sem API (não consome créditos)",
-                    value=False
+                    value=MODO_OFFLINE_PADRAO,
+                    info="Ativado automaticamente quando a chave da API não está configurada.",
                 )
 
                 with gr.Row():
