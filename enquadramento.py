@@ -228,6 +228,8 @@ def aplicar_enquadramento(
             erro_pipe = True
     stderr = processo_ffmpeg.stderr.read().decode("utf-8", errors="replace")
     codigo = processo_ffmpeg.wait()
+    if processo_ffmpeg.stderr:
+        processo_ffmpeg.stderr.close()
 
     if codigo == 0 and not erro_pipe:
         print("   ✅ Enquadramento concluído!")

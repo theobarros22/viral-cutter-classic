@@ -281,7 +281,6 @@ input[type=checkbox] { accent-color: var(--vc-accent) !important; }
 
 @media (max-width: 760px) {
     .gradio-container { padding: 14px 12px 48px !important; }
-    .gradio-container > .main > .wrap { padding-inline: 0 !important; }
     .gradio-container .main, .gradio-container .wrap, .gradio-container .contain { min-width: 0 !important; }
     .app-header { grid-template-columns: 1fr; gap: 22px; padding: 24px 20px; border-radius: 16px; }
     .app-header h1 { font-size: clamp(2.25rem, 14vw, 3.35rem); }
@@ -296,6 +295,19 @@ input[type=checkbox] { accent-color: var(--vc-accent) !important; }
         scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important;
     }
 }
+"""
+
+# O CSS injetado pelo Gradio é escopado dentro de ``.contain`` e não alcança
+# o contêiner externo ``.main``. Esta regra precisa ficar no <head> global.
+HEAD = """
+<style>
+@media (max-width: 760px) {
+    .gradio-container .main {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+}
+</style>
 """
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1124,6 +1136,7 @@ if __name__ == "__main__":
         server_name="127.0.0.1",
         server_port=porta,
         css=CSS,
+        head=HEAD,
         inbrowser=os.environ.get("VIRAL_CUTTER_NO_BROWSER") != "1",
         share=False,
         allowed_paths=[
