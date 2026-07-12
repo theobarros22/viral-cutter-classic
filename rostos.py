@@ -24,6 +24,24 @@ from runtime import pasta_dados
 
 LOGGER = logging.getLogger("ViralCutter.rostos")
 
+
+class VideoIlegivelError(RuntimeError):
+    """
+    O vídeo não pôde ser decodificado — nenhum quadro foi lido.
+
+    Quase sempre significa que o upload ainda não terminou (arquivos grandes
+    levam minutos) ou que o arquivo está corrompido/incompleto. É diferente de
+    "li o vídeo e não achei rosto nenhum" — esse caso continua retornando [].
+    """
+
+
+MSG_VIDEO_ILEGIVEL = (
+    "⏳ Não consegui ler nenhum quadro do vídeo. Isso quase sempre significa "
+    "que o upload ainda NÃO terminou (arquivos grandes, de vários GB, levam "
+    "minutos) ou que o arquivo está corrompido. Aguarde o upload chegar a 100% "
+    "e clique em DETECTAR PESSOAS novamente."
+)
+
 # Abaixo disso, a diferença de movimento entre os rostos é ruído de
 # compressão/iluminação, não fala real — comum quando um microfone de mesa
 # cobre a boca e a região analisada mal muda de um frame pro outro.
@@ -146,12 +164,16 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
         _print_seguro(f"🔍 Detectando pessoas nos primeiros {limite_minutos:.0f} min ({amostras_reais} amostras)...")
 
         # Guarda: lista de (posicao_x, frame_com_rosto_recortado)
+        # frames_lidos distingue "vídeo ilegível/incompleto" (0 quadros lidos)
+        # de "li o vídeo mas não há rosto" (quadros lidos, 0 detecções).
         deteccoes = []
+        frames_lidos = 0
         for frame_idx in alvos:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
             ret, frame = cap.read()
             if not ret:
                 continue
+            frames_lidos += 1
 
             rostos = detectar_rostos_robusto(frame, detector)
             for rosto in rostos:
@@ -198,6 +220,7 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                 if frame_idx % passo_sequencial == 0:
                     ret, frame = cap.retrieve()
                     if ret:
+                        frames_lidos += 1
                         for rosto in detectar_rostos_robusto(frame, detector):
                             x_centro = rosto["x"] * largura
                             y_centro = rosto["y"] * altura
@@ -231,6 +254,12 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                 os.remove(caminho_video)
             except OSError:
                 pass
+
+    # Nenhum quadro decodificado → vídeo incompleto (upload em andamento) ou
+    # corrompido. Sinaliza com clareza em vez de reportar "nenhuma pessoa".
+    if frames_lidos == 0:
+        _print_seguro(MSG_VIDEO_ILEGIVEL)
+        raise VideoIlegivelError(MSG_VIDEO_ILEGIVEL)
 
     reconhecedor = _inicializar_reconhecedor_facial()
     deteccoes = _filtrar_candidatos_pessoas(

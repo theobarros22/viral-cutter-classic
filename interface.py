@@ -416,14 +416,23 @@ def ao_processar(
     efeito_legenda=False, efeito_zoom=False, efeito_sfx=False,
     aplicar_hook=False,
 ):
+    # O checkbox "legendas automáticas" ativa o mesmo efeito de legendas
+    # da etapa 4 (antes ele não estava ligado a nada e não fazia nada).
+    efeito_legenda = bool(efeito_legenda or aplicar_legendas_auto)
     # Etapa 4 roda se qualquer um dos três efeitos estiver marcado
     usar_efeitos_virais = bool(efeito_legenda or efeito_zoom or efeito_sfx)
+
+    # Retorno de erro precisa ter a MESMA aridade dos outputs (5 valores):
+    # log, relatório, galeria, painel (só visibilidade) e dropdown de clipes.
+    def _erro(msg):
+        return msg, "", [], gr.update(visible=False), gr.update(choices=[], value=None)
+
     if not _estado.get("caminho_video"):
-        return "❌ Detecte as pessoas primeiro.", "", [], gr.update(visible=False, choices=[], value=None)
+        return _erro("❌ Detecte as pessoas primeiro.")
     if not _estado.get("segmentos") and not retomar_processamento:
-        return "❌ Analise o vídeo primeiro.", "", [], gr.update(visible=False, choices=[], value=None)
-    if not pasta_saida.strip():
-        return "❌ Informe a pasta de destino.", "", [], gr.update(visible=False, choices=[], value=None)
+        return _erro("❌ Analise o vídeo primeiro.")
+    if not pasta_saida or not pasta_saida.strip():
+        return _erro("❌ Informe a pasta de destino.")
 
     qualidade = QUALIDADES.get(qualidade_label, "1080p")
     perfil = PERFIS_PROCESSAMENTO.get(perfil_label, "equilibrado")
@@ -514,6 +523,38 @@ def ao_processar(
             gr.update(visible=False),
             gr.update(choices=[], value=None),
         )
+
+
+def ao_processar_automatico(
+    producao_auto,
+    pasta_saida, qualidade_label, perfil_label,
+    retomar_processamento, remover_pausas,
+    min_silencio_ms, margem_silencio_ms,
+    pessoas_selecionadas, aplicar_legendas_auto,
+    efeito_legenda=False, efeito_zoom=False, efeito_sfx=False,
+    aplicar_hook=False,
+):
+    """
+    PRODUÇÃO AUTOMÁTICA: encadeada após TRANSCREVER E ANALISAR.
+    Com o modo automático LIGADO e a análise bem-sucedida, dispara o
+    processamento completo sem o usuário clicar em PROCESSAR VÍDEO.
+    Com o modo DESLIGADO (ou análise sem segmentos), não faz nada —
+    devolve updates vazios para não mexer na tela.
+    """
+    sem_acao = (gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
+    if not producao_auto:
+        return sem_acao
+    if not _estado.get("segmentos"):
+        # Análise falhou ou não gerou segmentos — não inicia produção
+        return sem_acao
+    return ao_processar(
+        pasta_saida, qualidade_label, perfil_label,
+        retomar_processamento, remover_pausas,
+        min_silencio_ms, margem_silencio_ms,
+        pessoas_selecionadas, aplicar_legendas_auto,
+        efeito_legenda, efeito_zoom, efeito_sfx,
+        aplicar_hook,
+    )
 
 
 def ao_cancelar_processo():
@@ -626,11 +667,18 @@ def ao_obter_transcricao(
             wav_temp = os.path.join(tempfile.gettempdir(), "_legendas_audio.wav")
 
             log("🔊 Extraindo áudio...")
-            _extrair_audio_wav(caminho_video, wav_temp)
+            # Se a extração falhar, transcreve o vídeo direto em vez de
+            # tentar abrir um WAV que não existe (erro confuso pro usuário).
+            alvo_transcricao = (
+                wav_temp if _extrair_audio_wav(caminho_video, wav_temp)
+                else caminho_video
+            )
+            if alvo_transcricao == caminho_video:
+                log("⚠️ Falha ao extrair áudio — transcrevendo o vídeo diretamente.")
 
             log("📝 Transcrevendo... (pode demorar)")
             resultado = modelo.transcribe(
-                wav_temp, language=idioma, verbose=False,
+                alvo_transcricao, language=idioma, verbose=False,
                 fp16=(dispositivo == "cuda"),
                 word_timestamps=True
             )
@@ -822,7 +870,7 @@ def criar_interface():
                 gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
                 arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
 
-                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--muted);text-align:center;margin:8px 0;">— ou —</p>')
+                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--vc-muted);text-align:center;margin:8px 0;">— ou —</p>')
                 with gr.Row():
                     url_video = gr.Textbox(
                         label="Link do vídeo (YouTube etc.)",
@@ -864,6 +912,13 @@ def criar_interface():
                     label="Modo offline — sem API (não consome créditos)",
                     value=MODO_OFFLINE_PADRAO,
                     info="Ativado automaticamente quando a chave da API não está configurada.",
+                )
+
+                producao_automatica = gr.Checkbox(
+                    label="🚀 Produção automática — processar direto após a análise",
+                    value=False,
+                    info="Ao terminar TRANSCREVER E ANALISAR, o PROCESSAR VÍDEO inicia sozinho "
+                         "com as opções da seção 04 (qualidade, efeitos, hook etc.), sem precisar aprovar.",
                 )
 
                 with gr.Row():
@@ -922,8 +977,9 @@ def criar_interface():
                     )
 
                 legendar_automaticamente = gr.Checkbox(
-                    label="Aplicar legendas automáticas nos clipes gerados (estilo: Palavra Vazada)",
-                    value=False
+                    label="Aplicar legendas automáticas nos clipes gerados",
+                    value=False,
+                    info="Equivale a marcar 'Legendas ASS' abaixo (palavra por palavra, pop-up e karaokê).",
                 )
 
                 gr.HTML('<p class="sec" style="margin-bottom:4px">Efeitos virais após processamento</p>')
@@ -978,6 +1034,20 @@ def criar_interface():
                     fn=ao_analisar,
                     inputs=[idioma, modelo, nicho, duracao_min, duracao_max, modo_offline],
                     outputs=[log_analise],
+                ).then(
+                    # PRODUÇÃO AUTOMÁTICA: encadeia o processamento logo após
+                    # a análise quando o checkbox está marcado. Com ele
+                    # desmarcado, a função devolve updates vazios (no-op).
+                    fn=ao_processar_automatico,
+                    inputs=[
+                        producao_automatica,
+                        pasta_saida, qualidade, perfil_processamento,
+                        retomar_processamento, remover_pausas,
+                        min_silencio_ms, margem_silencio_ms,
+                        pessoas_opcoes, legendar_automaticamente,
+                        efeito_legenda, efeito_zoom, efeito_sfx, hook_automatico,
+                    ],
+                    outputs=[log_processo, relatorio_out, preview_gallery, painel_enviar_legenda, opcoes_clipes],
                 )
                 btn_processar.click(
                     fn=ao_processar,
@@ -1016,7 +1086,7 @@ def criar_interface():
 
                 leg_arquivo = gr.File(label="Upload direto de vídeo", file_types=["video"])
 
-                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--muted);text-align:center;margin:8px 0;">— ou —</p>')
+                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--vc-muted);text-align:center;margin:8px 0;">— ou —</p>')
 
                 with gr.Row():
                     leg_pasta = gr.Textbox(

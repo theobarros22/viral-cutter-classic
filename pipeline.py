@@ -307,7 +307,7 @@ def etapa1_detectar_pessoas(
 
     # Imports pesados somente quando esta etapa é usada. Isso reduz bastante
     # o tempo entre dar duplo clique e a interface aparecer.
-    from rostos import detectar_pessoas_no_video, salvar_previews
+    from rostos import detectar_pessoas_no_video, salvar_previews, VideoIlegivelError
 
     if pasta_temp is None:
         pasta_temp = os.path.join(pasta_dados(), "previews")
@@ -322,11 +322,18 @@ def etapa1_detectar_pessoas(
     log("🔍 Detectando pessoas no vídeo...")
     # 30 amostras (era 10) — com vídeo de várias câmeras, 10 frames
     # podiam cair todos no mesmo ângulo e deixar pessoas sem detectar
-    pessoas = detectar_pessoas_no_video(
-        caminho_video,
-        max_amostras=30,
-        limite_minutos=5.0,
-    )
+    try:
+        pessoas = detectar_pessoas_no_video(
+            caminho_video,
+            max_amostras=30,
+            limite_minutos=5.0,
+        )
+    except VideoIlegivelError as e:
+        # Vídeo incompleto (upload ainda rodando) ou corrompido: mostra a
+        # mensagem clara na interface, sem traceback e sem fingir "0 pessoas".
+        log(str(e))
+        _cache["pessoas"] = []
+        return []
 
     if not pessoas:
         log("⚠️ Nenhuma pessoa detectada. Usando enquadramento central.")
