@@ -67,12 +67,80 @@ def carregar_modelo_whisper(modelo_nome: str, dispositivo: str):
     return modelo
 
 
+def _transcrever_faster_whisper(caminho_video: str, idioma: str, modelo_nome: str, dispositivo: str):
+    """
+    Transcreve com faster-whisper (CTranslate2): ~4x mais rápido que o
+    openai-whisper na mesma GPU, com word timestamps mais estáveis.
+
+    Retorna dict no MESMO formato do openai-whisper (text/segments/words),
+    ou None se a biblioteca não estiver instalada — o chamador então usa
+    o caminho tradicional. Instalar com: pip install faster-whisper
+    """
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        return None
+
+    chave = f"fw|{modelo_nome}|{dispositivo}"
+    if chave in _cache_modelo_whisper:
+        print(f"🎙️ Modelo faster-whisper '{modelo_nome}' já em memória (cache).")
+        modelo = _cache_modelo_whisper[chave]
+    else:
+        print(f"🚀 Carregando faster-whisper '{modelo_nome}' ({dispositivo})...")
+        compute = "float16" if dispositivo == "cuda" else "int8"
+        try:
+            modelo = WhisperModel(modelo_nome, device=dispositivo, compute_type=compute)
+        except Exception as e:
+            print(f"⚠️ faster-whisper falhou ao carregar ({e}). Usando openai-whisper.")
+            return None
+        _cache_modelo_whisper[chave] = modelo
+
+    # Extrai o áudio (mesmo WAV 16kHz mono do caminho tradicional)
+    pasta_temp = tempfile.gettempdir()
+    wav_temp = os.path.join(pasta_temp, "_whisper_audio_temp.wav")
+    alvo = wav_temp if _extrair_audio_wav(caminho_video, wav_temp) else caminho_video
+
+    try:
+        print("🎙️ Transcrevendo com faster-whisper... ")
+        segmentos_fw, info = modelo.transcribe(
+            alvo, language=idioma, word_timestamps=True, vad_filter=True,
+        )
+
+        # Converte o gerador do faster-whisper para o formato do openai-whisper
+        segments = []
+        texto_completo = ""
+        for s in segmentos_fw:
+            words = [
+                {"word": w.word, "start": float(w.start), "end": float(w.end)}
+                for w in (s.words or [])
+            ]
+            segments.append({
+                "start": float(s.start),
+                "end": float(s.end),
+                "text": s.text,
+                "words": words,
+            })
+            texto_completo += s.text
+        print(f"✅ Transcrição concluída! {len(segments)} segmentos encontrados.")
+        return {"text": texto_completo, "segments": segments, "language": idioma}
+    except Exception as e:
+        print(f"⚠️ Erro no faster-whisper ({e}). Usando openai-whisper.")
+        return None
+    finally:
+        if os.path.exists(wav_temp):
+            try:
+                os.remove(wav_temp)
+            except OSError:
+                pass
+
+
 def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str = "small") -> dict:
     """
     Transcreve o áudio do vídeo usando Whisper na GPU se disponível.
 
-    Para vídeos longos (>20 min), processa em chunks de 20 minutos
-    para evitar estouro de memória no espectrograma.
+    Preferência: faster-whisper (4x mais rápido, sem precisar de chunks —
+    ele processa áudio longo em streaming). Fallback: openai-whisper com
+    chunks de 20 minutos.
     """
     dispositivo = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -82,6 +150,12 @@ def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str =
     else:
         print("💻 GPU não disponível — usando CPU (mais lento)")
 
+    # ── Caminho rápido: faster-whisper (se instalado) ────────────────────
+    resultado_fw = _transcrever_faster_whisper(caminho_video, idioma, modelo_nome, dispositivo)
+    if resultado_fw is not None:
+        return resultado_fw
+
+    # ── Caminho tradicional: openai-whisper ──────────────────────────────
     modelo = carregar_modelo_whisper(modelo_nome, dispositivo)
 
     # Descobre a duração total do vídeo

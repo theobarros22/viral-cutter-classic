@@ -77,6 +77,12 @@ MIN_TAMANHO_ROSTO = 0.018
 ZONA_ROSTO_Y_MIN = 0.30
 ZONA_ROSTO_Y_MAX = 0.72
 
+# Cache da análise visual (cenas + rostos) por clipe.
+# Chave: (caminho absoluto, tamanho, mtime, perfil). Evita refazer toda a
+# análise em retry de validação e retomada de checkpoint.
+_cache_analise_visual: dict = {}
+_CACHE_ANALISE_MAX = 12  # limite de clipes em memória
+
 
 def aplicar_enquadramento(
     caminho_entrada: str,
@@ -100,8 +106,14 @@ def aplicar_enquadramento(
 
     print(f"🎬 Enquadramento por cena {qualidade} ({saida_w}x{saida_h})...")
 
-    # ── Passo 1: Detecta os cortes de cena dentro do clipe ────────────────
-    print("   🎞️ Detectando cortes de cena...")
+    # ── Cache: retry/retomada não refazem a análise visual ────────────────
+    try:
+        _st = os.stat(caminho_entrada)
+        chave_cache = (os.path.abspath(caminho_entrada), _st.st_size,
+                       _st.st_mtime_ns, perfil)
+    except OSError:
+        chave_cache = None
+
     passo_cena = 4 if perfil == "rapido" else (1 if perfil == "qualidade" else 2)
     # 25/30: medido no Papo Reto que em plano aberto multicâmera o
     # MediaPipe só acha a pessoa mais distante/de perfil em ~16% dos
@@ -110,18 +122,30 @@ def aplicar_enquadramento(
     # extra é pequeno (poucos ms de MediaPipe por amostra) e a mediana
     # dos clusters fica mais estável entre execuções.
     amostras_cena = 3 if perfil == "rapido" else (30 if perfil == "qualidade" else 25)
-    cenas = _detectar_cenas_pyscene(caminho_entrada)
-    if cenas is not None:
-        print(f"   📊 {len(cenas)} cena(s) [PySceneDetect]")
-    else:
-        cenas = _detectar_cenas(caminho_entrada, fps, passo=passo_cena)
-        print(f"   📊 {len(cenas)} cena(s) [detector interno — instale scenedetect p/ mais precisão]")
 
-    # ── Passo 2: Analisa os rostos DENTRO de cada cena ────────────────────
-    print("   🔍 Detectando rostos em cada cena...")
-    cenas = _analisar_rostos_por_cena(
-        caminho_entrada, cenas, amostras_por_cena=amostras_cena
-    )
+    if chave_cache is not None and chave_cache in _cache_analise_visual:
+        cenas = [dict(c) for c in _cache_analise_visual[chave_cache]]
+        print(f"   ♻️ Análise visual reaproveitada do cache ({len(cenas)} cenas).")
+    else:
+        # ── Passo 1: Detecta os cortes de cena dentro do clipe ────────────
+        print("   🎞️ Detectando cortes de cena...")
+        cenas = _detectar_cenas_pyscene(caminho_entrada)
+        if cenas is not None:
+            print(f"   📊 {len(cenas)} cena(s) [PySceneDetect]")
+        else:
+            cenas = _detectar_cenas(caminho_entrada, fps, passo=passo_cena)
+            print(f"   📊 {len(cenas)} cena(s) [detector interno — instale scenedetect p/ mais precisão]")
+
+        # ── Passo 2: Analisa os rostos DENTRO de cada cena ────────────────
+        print("   🔍 Detectando rostos em cada cena...")
+        cenas = _analisar_rostos_por_cena(
+            caminho_entrada, cenas, amostras_por_cena=amostras_cena
+        )
+
+        if chave_cache is not None:
+            if len(_cache_analise_visual) >= _CACHE_ANALISE_MAX:
+                _cache_analise_visual.clear()  # simples e suficiente
+            _cache_analise_visual[chave_cache] = [dict(c) for c in cenas]
 
     for c in cenas:
         if c["n_pessoas"] == 0:

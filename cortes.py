@@ -132,6 +132,61 @@ def calcular_intervalos_fala(
     return intervalos or [(0, duracao_ms)]
 
 
+def _analisar_silencios_ffmpeg(caminho_video: str, min_silencio_ms: int, threshold_db) -> tuple:
+    """
+    Detecta silêncios via FFmpeg (silencedetect) — ordens de magnitude mais
+    rápido que o pydub, que carrega o áudio inteiro na RAM e processa
+    janela a janela em Python puro.
+
+    Se threshold_db=None, mede antes o volume médio (volumedetect) e usa
+    média − 16dB, travado entre −60 e −25 (mesma regra do adaptativo).
+
+    Retorna (duracao_ms, threshold_db, silencios) ou None em falha —
+    o chamador então usa o caminho pydub tradicional.
+    """
+    from ffmpeg_utils import obter_duracao
+    import re
+
+    duracao_s = obter_duracao(caminho_video)
+    if duracao_s <= 0:
+        return None
+
+    try:
+        # 1. Threshold adaptativo via volumedetect (só áudio, rápido)
+        if threshold_db is None:
+            r = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-i", caminho_video, "-vn",
+                 "-af", "volumedetect", "-f", "null", "-"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            m = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
+            if not m:
+                return None
+            media_db = float(m.group(1))
+            threshold_db = int(max(-60, min(-25, media_db - 16)))
+            print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {media_db:.1f}dB) [FFmpeg]")
+
+        # 2. Silêncios via silencedetect
+        dur_min_s = max(200, int(min_silencio_ms)) / 1000.0
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", caminho_video, "-vn",
+             "-af", f"silencedetect=noise={int(threshold_db)}dB:d={dur_min_s:.3f}",
+             "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        inicios = [float(x) for x in re.findall(r"silence_start:\s*(-?[\d.]+)", r.stderr)]
+        fins = [float(x) for x in re.findall(r"silence_end:\s*(-?[\d.]+)", r.stderr)]
+
+        silencios = []
+        for idx, ini in enumerate(inicios):
+            fim = fins[idx] if idx < len(fins) else duracao_s  # silêncio até o final
+            silencios.append((max(0, int(ini * 1000)), int(fim * 1000)))
+
+        return (int(duracao_s * 1000), int(threshold_db), silencios)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def remover_silencios(
     caminho_video: str,
     caminho_saida: str,
@@ -144,17 +199,23 @@ def remover_silencios(
 
     threshold_db=None (padrão) ativa o threshold adaptativo, calculado
     a partir do volume médio do áudio — mais preciso que um valor fixo.
+
+    Caminho rápido: FFmpeg silencedetect. Fallback: pydub.
     """
-    audio = AudioSegment.from_file(caminho_video)
-    duracao_ms = len(audio)
-    if threshold_db is None:
-        threshold_db = calcular_threshold_adaptativo(audio)
-        print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {audio.dBFS:.1f}dBFS)")
-    silencios = silence.detect_silence(
-        audio,
-        min_silence_len=max(200, int(min_silencio_ms)),
-        silence_thresh=int(threshold_db),
-    )
+    analise = _analisar_silencios_ffmpeg(caminho_video, min_silencio_ms, threshold_db)
+    if analise is not None:
+        duracao_ms, threshold_db, silencios = analise
+    else:
+        audio = AudioSegment.from_file(caminho_video)
+        duracao_ms = len(audio)
+        if threshold_db is None:
+            threshold_db = calcular_threshold_adaptativo(audio)
+            print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {audio.dBFS:.1f}dBFS)")
+        silencios = silence.detect_silence(
+            audio,
+            min_silence_len=max(200, int(min_silencio_ms)),
+            silence_thresh=int(threshold_db),
+        )
     intervalos = calcular_intervalos_fala(duracao_ms, silencios, margem_ms)
 
     if len(intervalos) == 1 and intervalos[0] == (0, duracao_ms):
@@ -211,6 +272,15 @@ def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_
         lista de tuplas (inicio_ms, fim_ms) com os períodos de silêncio
     """
     print("🔇 Analisando silêncios no áudio...")
+
+    # Caminho rápido: FFmpeg silencedetect
+    analise = _analisar_silencios_ffmpeg(caminho_video, min_silencio_ms, threshold_db)
+    if analise is not None:
+        _, _, periodos_silencio = analise
+        print(f"✅ {len(periodos_silencio)} períodos de silêncio encontrados. [FFmpeg]")
+        return periodos_silencio
+
+    # Fallback: pydub
     audio = AudioSegment.from_file(caminho_video)
 
     if threshold_db is None:

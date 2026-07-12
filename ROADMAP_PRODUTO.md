@@ -66,9 +66,16 @@ Meta: nenhum participante importante fica fora do quadro no conjunto de testes.
 1. Perfis Rapido, Equilibrado e Maxima Qualidade implementados.
 2. Medicao separada de corte, falante e enquadramento implementada.
 3. Whisper Base disponivel como padrao rapido.
-4. Criar cache de deteccao facial e posicoes por clipe.
-5. Renderizar crops fixos por cena diretamente com filtros FFmpeg.
-6. Processar clipes independentes em paralelo, respeitando VRAM e NVENC.
+4. ✅ Cache de deteccao facial e posicoes por clipe (04/07 — retry/retomada gratis).
+5. Renderizar crops fixos por cena diretamente com filtros FFmpeg. [PROXIMO — ganho 3-5x no render; PySceneDetect tornou as cenas confiaveis]
+6. Processar clipes independentes em paralelo, respeitando VRAM e NVENC. [ULTIMO — complexidade alta, so apos baseline]
+7. ✅ faster-whisper com fallback (04/07 — ativar: pip install faster-whisper; ganho ~4x na transcricao).
+8. ✅ silencedetect FFmpeg no lugar do pydub (04/07 — com fallback).
+9. Eliminar encode intermediario do corte (enquadramento le direto do original com offset). [ganho ~20-30s/clipe]
+10. MediaPipe em modo VIDEO com tracking entre frames (2-3x na deteccao de falante + menos jitter).
+
+Regra: itens 5, 6, 9 e 10 so entram DEPOIS da revalidacao do enquadramento
+reconstruido, um por vez, com os tempos por etapa como baseline.
 
 Meta: exportacao 1080p proxima ou superior ao tempo real na RTX 3050.
 
