@@ -8,3 +8,9 @@ opencv-python
 pydub
 pyinstaller
 torch
+
+# Performance e novas funcionalidades (04/07/2026) — todas com fallback:
+# o app funciona sem elas, mas fica mais rápido/completo com elas.
+scenedetect
+faster-whisper
+yt-dlp

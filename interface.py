@@ -315,6 +315,30 @@ HEAD = """
 # ABA 1 — CORTE VIRAL (funções)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def ao_baixar_link(url):
+    """Baixa vídeo de um link (YouTube etc.) e coloca no campo de upload."""
+    if not url or not str(url).strip():
+        return "❌ Cole um link primeiro.", gr.update()
+
+    logs = []
+    def cb(msg):
+        logs.append(msg)
+
+    try:
+        from download_video import baixar_video
+        caminho = baixar_video(str(url).strip(), progresso_callback=cb)
+        logs.append("👉 Agora clique em DETECTAR PESSOAS.")
+        return "\n".join(logs), gr.update(value=caminho)
+    except ImportError:
+        return (
+            "❌ yt-dlp não instalado. No CMD:\n"
+            "   venv311\\Scripts\\pip install yt-dlp",
+            gr.update(),
+        )
+    except Exception as e:
+        return "\n".join(logs) + f"\n❌ Erro no download: {e}", gr.update()
+
+
 def ao_detectar_pessoas(arquivo_video):
     if arquivo_video is None:
         return "❌ Envie um vídeo primeiro.", gr.update(visible=False), [], gr.update(choices=[], value=[])
@@ -798,6 +822,19 @@ def criar_interface():
                 gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
                 arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
 
+                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--muted);text-align:center;margin:8px 0;">— ou —</p>')
+                with gr.Row():
+                    url_video = gr.Textbox(
+                        label="Link do vídeo (YouTube etc.)",
+                        placeholder="https://www.youtube.com/watch?v=...",
+                        scale=4,
+                    )
+                    btn_baixar = gr.Button("⬇️ BAIXAR", scale=1)
+                gr.Markdown(
+                    "*Baixe apenas vídeos seus ou com direito de uso. Requer: "
+                    "`pip install yt-dlp`*",
+                )
+
                 with gr.Row(elem_classes="btn-detectar"):
                     btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
 
@@ -927,6 +964,11 @@ def criar_interface():
                     btn_enviar_legenda = gr.Button("ENVIAR CLIPE PARA LEGENDAS", scale=2)
 
                 # Eventos — Corte
+                btn_baixar.click(
+                    fn=ao_baixar_link,
+                    inputs=[url_video],
+                    outputs=[log_deteccao, arquivo_video],
+                )
                 btn_detectar.click(
                     fn=ao_detectar_pessoas,
                     inputs=[arquivo_video],
