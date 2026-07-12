@@ -77,6 +77,15 @@ MIN_TAMANHO_ROSTO = 0.018
 ZONA_ROSTO_Y_MIN = 0.30
 ZONA_ROSTO_Y_MAX = 0.72
 
+# ── Zoom adaptativo ao rosto (conceito estudado no ViralCutter open source
+# e nos cortes profissionais de podcast): a janela de crop é dimensionada
+# pelo TAMANHO do rosto na cena, não por fração fixa do quadro. Rosto
+# pequeno (plano aberto) → zoom forte; rosto grande (câmera fechada) →
+# quadro inteiro. O resultado parece direção de câmera, não recorte.
+FATOR_ZOOM_ROSTO = 4.5    # altura do crop ≈ 4.5x a largura do rosto (px)
+ZOOM_MIN_ALTURA = 0.50    # nunca fecha mais que 50% da altura (qualidade)
+POSICAO_ROSTO_QUADRO = 0.40  # rosto a 40% do topo do quadro (regra dos terços)
+
 # Cache da análise visual (cenas + rostos) por clipe.
 # Chave: (caminho absoluto, tamanho, mtime, perfil). Evita refazer toda a
 # análise em retry de validação e retomada de checkpoint.
@@ -205,6 +214,7 @@ def aplicar_enquadramento(
     inicios_cena = {c["frame_ini"] for c in cenas}
     ALPHA_SUAVE = 0.18  # fração da distância percorrida por frame
     x_suave = None
+    zoom_suave = None
 
     def _aproximar(atual, alvo):
         return alvo if atual is None else atual + (alvo - atual) * ALPHA_SUAVE
@@ -224,13 +234,44 @@ def aplicar_enquadramento(
 
         # Corte de cena: crop salta direto para o novo alvo (corte seco)
         if frame_idx in inicios_cena:
-            x_suave = xa_suave = xb_suave = None
+            x_suave = None
+            zoom_suave = None
 
         # Único modo de crop: 9:16 de 1 alvo. "CENTRAL" (0 ou 2+ pessoas)
         # usa x=0.5 fixo; "SOLO_A" segue a pessoa única detectada.
         x_suave = _aproximar(x_suave, p["xa"])
-        x_crop = _calcular_x_crop(x_suave, largura, crop_w_916)
-        cortado = frame[0:altura, x_crop:x_crop + crop_w_916]
+
+        # ── Zoom adaptativo ao rosto ──────────────────────────────────────
+        # Janela proporcional ao tamanho do rosto: plano aberto fecha na
+        # pessoa (parece direção de câmera); câmera já fechada usa o quadro
+        # inteiro. ta=0 (sem detecção confiável) = sem zoom, comportamento
+        # tradicional.
+        ta = p.get("ta", 0.0)
+        if ta > 0:
+            crop_h_alvo = ta * largura * FATOR_ZOOM_ROSTO
+            crop_h_alvo = max(altura * ZOOM_MIN_ALTURA, min(altura, crop_h_alvo))
+        else:
+            crop_h_alvo = float(altura)
+        zoom_suave = _aproximar(zoom_suave, crop_h_alvo)
+
+        crop_h = int(zoom_suave)
+        crop_w = int(crop_h * 9 / 16)
+        if crop_w > largura:
+            crop_w = largura
+            crop_h = int(crop_w * 16 / 9)
+        crop_h -= crop_h % 2
+        crop_w -= crop_w % 2
+
+        x_crop = _calcular_x_crop(x_suave, largura, crop_w)
+        if crop_h >= altura:
+            y_crop = 0
+            crop_h = altura
+        else:
+            # Rosto na regra dos terços do quadro
+            y_crop = int(p.get("ya", 0.40) * altura - POSICAO_ROSTO_QUADRO * crop_h)
+            y_crop = max(0, min(altura - crop_h, y_crop))
+
+        cortado = frame[y_crop:y_crop + crop_h, x_crop:x_crop + crop_w]
         frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
 
         try:
@@ -400,10 +441,10 @@ def _analisar_rostos_por_cena(
                         continue
                     rostos_cena.append(r)
 
-        posicoes_x, posicoes_y = _filtrar_rostos_na_zona_de_cabeca(rostos_cena)
+        posicoes_x, posicoes_y, posicoes_w = _filtrar_rostos_na_zona_de_cabeca(rostos_cena)
 
         # Agrupa as posições encontradas NESTA cena
-        cena.update(_agrupar_posicoes_cena(posicoes_x, posicoes_y))
+        cena.update(_agrupar_posicoes_cena(posicoes_x, posicoes_y, posicoes_w))
 
     cap.release()
     if detector is not None:
@@ -428,10 +469,14 @@ def _filtrar_rostos_na_zona_de_cabeca(rostos: list) -> tuple:
         if ZONA_ROSTO_Y_MIN <= r["y"] <= ZONA_ROSTO_Y_MAX
     ]
     usar = na_zona if na_zona else rostos
-    return [r["x"] for r in usar], [r["y"] for r in usar]
+    return (
+        [r["x"] for r in usar],
+        [r["y"] for r in usar],
+        [r.get("w", 0.0) for r in usar],
+    )
 
 
-def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
+def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None, posicoes_w: list = None) -> dict:
     """
     Agrupa posições X (e Y) de rostos de uma cena em 0, 1 ou 2 grupos.
 
@@ -446,23 +491,26 @@ def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
 
     if not posicoes_x:
         return {"n_pessoas": 0, "lado_a": 0.5, "lado_b": 0.5,
-                "lado_a_y": Y_PADRAO, "lado_b_y": Y_PADRAO}
+                "lado_a_y": Y_PADRAO, "lado_b_y": Y_PADRAO,
+                "lado_a_tam": 0.0, "lado_b_tam": 0.0}
 
-    pares = sorted(zip(
-        posicoes_x,
-        posicoes_y if posicoes_y and len(posicoes_y) == len(posicoes_x)
-        else [Y_PADRAO] * len(posicoes_x),
-    ))
+    n = len(posicoes_x)
+    ys_ok = posicoes_y if posicoes_y and len(posicoes_y) == n else [Y_PADRAO] * n
+    ws_ok = posicoes_w if posicoes_w and len(posicoes_w) == n else [0.0] * n
+    pares = sorted(zip(posicoes_x, ys_ok, ws_ok))
     xs = [p[0] for p in pares]
     ys = [p[1] for p in pares]
+    ws = [p[2] for p in pares]
 
     # Se todas as posições estão num intervalo estreito, é uma pessoa só.
     # 0.28 tolera movimentação na cadeira sem virar "duas pessoas".
     if xs[-1] - xs[0] < 0.28:
         centro = float(np.median(xs))
         centro_y = float(np.clip(np.median(ys), 0.15, 0.55))
+        tam = float(np.median(ws))
         return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
-                "lado_a_y": centro_y, "lado_b_y": centro_y}
+                "lado_a_y": centro_y, "lado_b_y": centro_y,
+                "lado_a_tam": tam, "lado_b_tam": tam}
 
     # Agrupa posições vizinhas (salto > 0.15 abre novo cluster). Com 3+
     # clusters, mantém os 2 com MAIS detecções nas amostras: pessoas reais
@@ -487,8 +535,10 @@ def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
     if len(clusters) == 1:
         centro = _mediana(clusters[0], 0)
         centro_y = float(np.clip(_mediana(clusters[0], 1), 0.15, 0.55))
+        tam = _mediana(clusters[0], 2)
         return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
-                "lado_a_y": centro_y, "lado_b_y": centro_y}
+                "lado_a_y": centro_y, "lado_b_y": centro_y,
+                "lado_a_tam": tam, "lado_b_tam": tam}
 
     return {
         "n_pessoas": 2,
@@ -496,6 +546,8 @@ def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None) -> dict:
         "lado_b": _mediana(clusters[1], 0),
         "lado_a_y": float(np.clip(_mediana(clusters[0], 1), 0.15, 0.55)),
         "lado_b_y": float(np.clip(_mediana(clusters[1], 1), 0.15, 0.55)),
+        "lado_a_tam": _mediana(clusters[0], 2),
+        "lado_b_tam": _mediana(clusters[1], 2),
     }
 
 
@@ -521,12 +573,14 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
     ultimo_xb = 0.5
     ultimo_ya = Y_PADRAO
     ultimo_yb = Y_PADRAO
+    ultimo_ta = 0.0  # tamanho do rosto (p/ zoom adaptativo); 0 = sem zoom
 
     for cena in cenas:
         ini, fim = cena["frame_ini"], cena["frame_fim"]
         xa, xb = cena["lado_a"], cena["lado_b"]
         ya = cena.get("lado_a_y", Y_PADRAO)
         yb = cena.get("lado_b_y", Y_PADRAO)
+        ta = cena.get("lado_a_tam", 0.0)
 
         if cena["n_pessoas"] == 0:
             # Sem rosto detectado nesta cena (rostos de perfil enganam o
@@ -542,13 +596,14 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                 x_falante = float(np.median(falantes_cena))
                 for f in range(ini, min(fim, total_frames)):
                     plano[f] = {"modo": "SOLO_A", "xa": x_falante, "xb": x_falante,
-                                "ya": Y_PADRAO, "yb": Y_PADRAO}
+                                "ya": Y_PADRAO, "yb": Y_PADRAO, "ta": 0.0}
                 ultimo_modo_valido, ultimo_xa, ultimo_xb = "SOLO_A", x_falante, x_falante
+                ultimo_ta = 0.0
             else:
                 # Herda o enquadramento da última cena que tinha gente.
                 for f in range(ini, min(fim, total_frames)):
                     plano[f] = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
-                                "ya": ultimo_ya, "yb": ultimo_yb}
+                                "ya": ultimo_ya, "yb": ultimo_yb, "ta": ultimo_ta}
             continue
 
         if cena["n_pessoas"] == 1:
@@ -557,8 +612,9 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
             ultimo_xb = xa
             ultimo_ya = ya
             ultimo_yb = ya
+            ultimo_ta = ta
             for f in range(ini, min(fim, total_frames)):
-                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya}
+                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya, "ta": ta}
             continue
 
         # Duas ou mais pessoas: crop segue QUEM ESTÁ FALANDO (posicoes_falante
@@ -570,20 +626,27 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
         # válido (nunca pula pro centro no meio de uma cena só por silêncio).
         # Ver seção 10/11 do RELATORIO_COMPLETO_2026-07-03.md.
         x_alvo_atual = ultimo_xa if ultimo_modo_valido != "CENTRAL" else 0.5
+        # Zoom em cena de 2+: usa o MENOR rosto dos dois lados como base —
+        # garante que ninguém fique gigante demais quando o crop alterna.
+        ta_cena = min(
+            [t for t in (cena.get("lado_a_tam", 0.0), cena.get("lado_b_tam", 0.0)) if t > 0]
+            or [0.0]
+        )
         for f in range(ini, min(fim, total_frames)):
             pos = posicoes_falante[f] if f < len(posicoes_falante) else None
             if pos is not None:
                 x_alvo_atual = pos
             plano[f] = {"modo": "SOLO_A", "xa": x_alvo_atual, "xb": x_alvo_atual,
-                        "ya": Y_PADRAO, "yb": Y_PADRAO}
+                        "ya": Y_PADRAO, "yb": Y_PADRAO, "ta": ta_cena}
 
         ultimo_modo_valido = "SOLO_A"
         ultimo_xa = ultimo_xb = x_alvo_atual
         ultimo_ya = ultimo_yb = Y_PADRAO
+        ultimo_ta = ta_cena
 
     # Preenche buracos — usa último modo válido, nunca CENTRAL
     ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
-              "ya": ultimo_ya, "yb": ultimo_yb}
+              "ya": ultimo_ya, "yb": ultimo_yb, "ta": ultimo_ta}
     for f in range(total_frames):
         if plano[f] is None:
             plano[f] = ultimo

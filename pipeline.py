@@ -889,6 +889,12 @@ def etapa3_processar(
                 "score_viral": seg.get("score_viral", 0),
                 "resumo": seg.get("resumo", ""),
                 "duracao": round(seg["fim"] - seg["inicio"], 1),
+                # Metadados para o SLICING da etapa 4: com eles as legendas
+                # são fatiadas da transcrição-mestre, sem re-transcrever.
+                "inicio": seg["inicio"],
+                "fim": seg["fim"],
+                "hook_aplicado": [h_ini, h_fim] if duracao_hook_s > 0 else None,
+                "pausas_removidas": duracao_pausas_removidas_s > 0,
                 "tempos": {
                     "corte": round(tempo_corte, 1),
                     "falante": round(tempo_falante, 1),
@@ -959,6 +965,65 @@ def etapa3_processar(
 # ---------------------------------------------------------------------------
 # ETAPA 4 — EFEITOS VIRAIS (legendas ASS + zoom dinâmico + SFX)
 # ---------------------------------------------------------------------------
+
+def _fatiar_palavras_transcricao(transcricao: dict, resultado: dict) -> list:
+    """
+    SLICING: fatia as palavras do clipe a partir da transcrição-mestre da
+    etapa 2, em vez de re-transcrever o clipe com Whisper (conceito visto
+    no ViralCutter open source: "transcreve 1x, corta N vezes").
+
+    Mapeia os word timestamps ABSOLUTOS do vídeo original para a timeline
+    do CLIPE, incluindo o hook (cold open) quando aplicado:
+
+        [hook h_ini..h_fim] + [corte inicio..fim]
+        → palavras do hook em [0 .. dur_hook]
+        → palavras do corte em [dur_hook .. dur_hook + (fim-inicio)]
+
+    Retorna lista [{word, start, end}] ou None quando o slicing não é
+    seguro (sem metadados, sem transcrição, ou pausas removidas — que
+    mudam a timeline de forma não mapeável).
+    """
+    if not transcricao or not transcricao.get("segments"):
+        return None
+    inicio = resultado.get("inicio")
+    fim = resultado.get("fim")
+    if inicio is None or fim is None:
+        return None  # resultado antigo (checkpoint) sem metadados
+    if resultado.get("pausas_removidas"):
+        return None  # timeline interna mudou; só o Whisper sabe onde
+
+    todas = [
+        {"word": w["word"].strip(), "start": float(w["start"]), "end": float(w["end"])}
+        for seg in transcricao["segments"]
+        for w in seg.get("words", [])
+        if w.get("word", "").strip() and w.get("start") is not None
+    ]
+    if not todas:
+        return None
+
+    def _janela(t_ini, t_fim, offset):
+        """Palavras dentro de [t_ini, t_fim], reancoradas em offset."""
+        saida = []
+        for w in todas:
+            if w["start"] >= t_ini - 0.05 and w["end"] <= t_fim + 0.05:
+                saida.append({
+                    "word": w["word"],
+                    "start": round(max(0.0, w["start"] - t_ini + offset), 3),
+                    "end": round(max(0.0, w["end"] - t_ini + offset), 3),
+                })
+        return saida
+
+    palavras = []
+    hook = resultado.get("hook_aplicado")
+    dur_hook = 0.0
+    if hook:
+        h_ini, h_fim = float(hook[0]), float(hook[1])
+        dur_hook = h_fim - h_ini
+        palavras += _janela(h_ini, h_fim, 0.0)
+
+    palavras += _janela(float(inicio), float(fim), dur_hook)
+    return palavras or None
+
 
 def etapa4_efeitos_virais(
     resultados: list,
@@ -1069,23 +1134,32 @@ def etapa4_efeitos_virais(
             # única vez e reutilizado em todos os clipes do loop (antes,
             # recarregava 500MB-3GB do disco A CADA clipe).
             log(f"   [{i}/{total}] 🎙️ Transcrevendo...")
-            import torch as _torch
-            from analise import carregar_modelo_whisper
-            _dispositivo = "cuda" if _torch.cuda.is_available() else "cpu"
-            modelo_wh = carregar_modelo_whisper(modelo_whisper, _dispositivo)
-            transcricao = modelo_wh.transcribe(
-                caminho_clip,
-                language=idioma,
-                word_timestamps=True,
-                verbose=False,
-            )
+            # ── SLICING: tenta fatiar da transcrição-mestre (etapa 2) ─────
+            # Transcreve 1x, corta N vezes: elimina uma passada de Whisper
+            # por clipe. Fallback: transcrever o clipe como antes.
+            palavras = _fatiar_palavras_transcricao(_cache.get("transcricao"), resultado)
 
-            palavras = [
-                {"word": w["word"].strip(), "start": w["start"], "end": w["end"]}
-                for seg in transcricao.get("segments", [])
-                for w in seg.get("words", [])
-                if w["word"].strip()
-            ]
+            if palavras is not None:
+                log(f"   [{i}/{total}] ⚡ Legendas fatiadas da transcrição-mestre "
+                    f"({len(palavras)} palavras, sem re-transcrever).")
+            else:
+                import torch as _torch
+                from analise import carregar_modelo_whisper
+                _dispositivo = "cuda" if _torch.cuda.is_available() else "cpu"
+                modelo_wh = carregar_modelo_whisper(modelo_whisper, _dispositivo)
+                transcricao = modelo_wh.transcribe(
+                    caminho_clip,
+                    language=idioma,
+                    word_timestamps=True,
+                    verbose=False,
+                )
+
+                palavras = [
+                    {"word": w["word"].strip(), "start": w["start"], "end": w["end"]}
+                    for seg in transcricao.get("segments", [])
+                    for w in seg.get("words", [])
+                    if w["word"].strip()
+                ]
 
             # Smart Chunking com limiar de silêncio por intensidade
             silencio_chunk = cfg["silencio_chunk"]
