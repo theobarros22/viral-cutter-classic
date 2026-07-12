@@ -293,8 +293,22 @@ def segmentar_por_assunto(
         try:
             segmentos = _segmentar_com_ia(transcricao, duracao_min, duracao_max, nicho)
         except Exception as e:
-            if "credit" in str(e).lower() or "balance" in str(e).lower() or "billing" in str(e).lower():
+            msg = str(e).lower()
+            # Falta de créditos → cai pro offline (já existia).
+            if "credit" in msg or "balance" in msg or "billing" in msg:
                 print("⚠️ Créditos da API insuficientes. Usando modo offline automaticamente...")
+                segmentos = _segmentar_offline(transcricao, duracao_min, duracao_max)
+            # Chave ausente/ inválida ou sem autenticação → em vez de derrubar
+            # a análise com um traceback críptico, degrada pro offline e avisa.
+            elif any(t in msg for t in (
+                "authentication", "api_key", "api key", "x-api-key",
+                "auth_token", "credentials", "unauthorized", "401",
+                "could not resolve authentication",
+            )):
+                print("⚠️ Chave da API Anthropic ausente ou inválida. "
+                      "Usando modo offline automaticamente. "
+                      "Para usar a análise com IA, configure ANTHROPIC_API_KEY "
+                      "e reabra o programa (ou marque 'Modo offline' para não ver este aviso).")
                 segmentos = _segmentar_offline(transcricao, duracao_min, duracao_max)
             else:
                 raise
@@ -326,7 +340,6 @@ def _segmentar_com_ia(transcricao: dict, duracao_min: int, duracao_max: int, nic
         "podcast":   "opiniões fortes, revelações, discordâncias, histórias pessoais, frases de efeito",
         "casamento": "momentos emocionantes, votos, reações, surpresas, choro de alegria",
         "crime":     "revelações chocantes, confissões, viradas de investigação, momentos de tensão máxima",
-        "crime":     "revelações, viradas, momentos de tensão, confissões, detalhes chocantes",
         "esporte":   "gols, jogadas incríveis, reações, comemorações, momentos decisivos",
         "educacao":  "insights práticos, dicas aplicáveis, estatísticas surpreendentes, analogias",
     }
@@ -371,7 +384,9 @@ Retorne um array JSON com este formato exato:
     cliente = anthropic.Anthropic()
     resposta = cliente.messages.create(
         model="claude-opus-4-5",
-        max_tokens=2000,
+        # 2000 tokens truncava o JSON em vídeos longos (muitos segmentos),
+        # derrubando o json.loads com erro confuso. 8000 cobre com folga.
+        max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
 
@@ -380,9 +395,41 @@ Retorne um array JSON com este formato exato:
         linhas = texto_resposta.split("\n")
         texto_resposta = "\n".join(linhas[1:-1])
 
-    segmentos = json.loads(texto_resposta)
+    try:
+        segmentos = json.loads(texto_resposta)
+    except json.JSONDecodeError:
+        # Resposta truncada ou com texto extra: salva os objetos completos
+        # que existirem dentro do array em vez de perder a análise inteira.
+        segmentos = _salvar_json_parcial(texto_resposta)
+        if segmentos is None:
+            raise RuntimeError(
+                "A IA retornou um JSON inválido/incompleto. "
+                "Tente novamente ou use o modo offline."
+            )
+        print(f"⚠️ JSON incompleto da IA — {len(segmentos)} segmentos recuperados.")
     print(f"✅ IA identificou {len(segmentos)} segmentos virais.")
     return segmentos
+
+
+def _salvar_json_parcial(texto: str):
+    """
+    Recupera os objetos completos de um array JSON truncado.
+    Retorna lista de dicts ou None se nada aproveitável.
+    """
+    inicio = texto.find("[")
+    if inicio == -1:
+        return None
+    corpo = texto[inicio:]
+    # Corta no último fechamento de objeto e fecha o array manualmente
+    ultimo = corpo.rfind("}")
+    if ultimo == -1:
+        return None
+    candidato = corpo[: ultimo + 1].rstrip().rstrip(",") + "]"
+    try:
+        dados = json.loads(candidato)
+        return dados if isinstance(dados, list) and dados else None
+    except json.JSONDecodeError:
+        return None
 
 
 def _segmentar_offline(transcricao: dict, duracao_min: int, duracao_max: int) -> list:

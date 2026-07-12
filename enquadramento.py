@@ -204,6 +204,21 @@ def aplicar_enquadramento(
         stderr=subprocess.PIPE,
     )
 
+    # Drena o stderr em paralelo. Sem isso, se o FFmpeg encher o buffer do
+    # pipe de erro enquanto ainda estamos escrevendo frames no stdin, os
+    # dois processos travam um esperando o outro (deadlock clássico).
+    import threading
+    _stderr_chunks = []
+
+    def _drenar_stderr():
+        try:
+            _stderr_chunks.append(processo_ffmpeg.stderr.read())
+        except Exception:
+            pass
+
+    _t_stderr = threading.Thread(target=_drenar_stderr, daemon=True)
+    _t_stderr.start()
+
     print(f"   🎞️ Processando {total_frames} frames...")
     frame_idx = 0
     erro_pipe = False
@@ -291,10 +306,14 @@ def aplicar_enquadramento(
             processo_ffmpeg.stdin.close()
         except (BrokenPipeError, OSError):
             erro_pipe = True
-    stderr = processo_ffmpeg.stderr.read().decode("utf-8", errors="replace")
     codigo = processo_ffmpeg.wait()
+    _t_stderr.join(timeout=10)
+    stderr = (_stderr_chunks[0] if _stderr_chunks else b"").decode("utf-8", errors="replace")
     if processo_ffmpeg.stderr:
-        processo_ffmpeg.stderr.close()
+        try:
+            processo_ffmpeg.stderr.close()
+        except OSError:
+            pass
 
     if codigo == 0 and not erro_pipe:
         print("   ✅ Enquadramento concluído!")

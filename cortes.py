@@ -7,8 +7,12 @@ Usa pydub para análise de áudio e ffmpeg para os cortes finais.
 
 import os
 import subprocess
-from pydub import AudioSegment, silence
 from ffmpeg_utils import argumentos_encoder
+
+# NOTA: pydub é apenas o FALLBACK da detecção de silêncio (o caminho rápido
+# usa FFmpeg silencedetect). O import é feito dentro das funções que precisam
+# dele — assim o módulo carrega mesmo sem pydub instalado, como promete o
+# ROADMAP ("o app funciona sem elas").
 
 
 def calcular_threshold_adaptativo(audio, offset_db: int = 16) -> int:
@@ -206,6 +210,7 @@ def remover_silencios(
     if analise is not None:
         duracao_ms, threshold_db, silencios = analise
     else:
+        from pydub import AudioSegment, silence
         audio = AudioSegment.from_file(caminho_video)
         duracao_ms = len(audio)
         if threshold_db is None:
@@ -281,6 +286,7 @@ def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_
         return periodos_silencio
 
     # Fallback: pydub
+    from pydub import AudioSegment, silence
     audio = AudioSegment.from_file(caminho_video)
 
     if threshold_db is None:

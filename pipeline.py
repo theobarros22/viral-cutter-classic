@@ -217,7 +217,8 @@ def validar_midia_ffprobe(
 
 def _renomear_invalido(caminho: str) -> str:
     """Renomeia arquivo para .invalid.mp4 para não poluir a pasta de saída."""
-    novo = caminho.replace(".mp4", ".invalid.mp4")
+    base, ext = os.path.splitext(caminho)
+    novo = f"{base}.invalid{ext or '.mp4'}"
     try:
         if os.path.exists(caminho):
             os.replace(caminho, novo)
@@ -833,6 +834,7 @@ def etapa3_processar(
                 _checar_cancelamento()
                 log(f"   [{i}/{total}] 🔄 Retry 1/{MAX_EXPORT_RETRIES} — re-enquadrando...")
                 # caminho_temp ainda existe (finally só remove ao sair do bloco try)
+                _dur_esperada_retry = _dur_esperada
                 if not os.path.exists(caminho_temp):
                     if not cortar_clipe(caminho_video, seg["inicio"], seg["fim"], caminho_temp):
                         log(f"   [{i}/{total}] ❌ Retry: falha ao re-cortar clipe.")
@@ -841,6 +843,10 @@ def etapa3_processar(
                         )
                         salvar_checkpoint(arquivo_checkpoint, checkpoint)
                         continue
+                    # O re-corte é SEM hook e SEM remoção de pausas — a duração
+                    # esperada volta a ser a do segmento puro. Sem este ajuste,
+                    # a validação do retry rejeitava clipes corretos.
+                    _dur_esperada_retry = seg["fim"] - seg["inicio"]
                 _sucesso_retry = aplicar_enquadramento(
                     caminho_temp, caminho_final, posicoes,
                     pessoas_priorizadas_ids, qualidade=qualidade, perfil=perfil
@@ -854,7 +860,7 @@ def etapa3_processar(
                     continue
                 _val2 = validar_midia_ffprobe(
                     caminho_final,
-                    duracao_esperada=_dur_esperada,
+                    duracao_esperada=_dur_esperada_retry,
                     audio_policy="optional",
                 )
                 if not _val2["valid"]:
@@ -1280,7 +1286,8 @@ def etapa4_efeitos_virais(
                 continue
 
             # ── 5. Executar FFmpeg — único passe, fallback robusto ─────────
-            caminho_viral = caminho_clip.replace(".mp4", "_viral.mp4")
+            _base_clip, _ext_clip = os.path.splitext(caminho_clip)
+            caminho_viral = f"{_base_clip}_viral{_ext_clip or '.mp4'}"
             cmd_base = (
                 [_ffmpeg, "-y", "-i", caminho_clip]
                 + inputs_sfx

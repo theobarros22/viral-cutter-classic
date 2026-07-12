@@ -1,19 +1,20 @@
 """
 CoreEngine.py
 ------------
-MÃ³dulo principal de processamento audiovisual para ediÃ§Ã£o de alta retenÃ§Ã£o.
-ContÃ©m algoritmos de IA, visÃ£o computacional e pipelines FFmpeg acelerados por hardware.
+Módulo principal de processamento audiovisual para edição de alta retenção.
+Contém algoritmos de IA, visão computacional e pipelines FFmpeg acelerados por hardware.
 """
 
 import os
 import sys
 import json
+import shutil
 import logging
 import subprocess
 import tempfile
 from pathlib import Path
 
-# ConfiguraÃ§Ã£o de Logs
+# Configuração de Logs
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s - %(message)s",
@@ -22,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger("CoreEngine")
 
 def _localizar_ffmpeg():
-    """Localiza a presenÃ§a do executÃ¡vel FFmpeg no sistema ou pasta local."""
+    """Localiza a presença do executável FFmpeg no sistema ou pasta local."""
     import shutil
     candidatos = [
         shutil.which("ffmpeg"),
@@ -37,18 +38,18 @@ def _localizar_ffmpeg():
 FFMPEG_PATH = _localizar_ffmpeg()
 
 # -----------------------------------------------------------------------------
-# 1. PREPARAÃ‡ÃƒO E TRANSCRIÃ‡ÃƒO (IA & WORD-LEVEL SYNC)
+# 1. PREPARAÇÃO E TRANSCRIÇÃO (IA & WORD-LEVEL SYNC)
 # -----------------------------------------------------------------------------
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
     """
-    Extrai o Ã¡udio do vÃ­deo original em formato .wav otimizado para Whisper.
-    EspecificaÃ§Ãµes: 16kHz, mono, PCM 16-bit (pcm_s16le).
+    Extrai o áudio do vídeo original em formato .wav otimizado para Whisper.
+    Especificações: 16kHz, mono, PCM 16-bit (pcm_s16le).
     """
-    logger.info(f"Iniciando extraÃ§Ã£o de Ã¡udio: {video_path} -> {audio_path}")
+    logger.info(f"Iniciando extração de áudio: {video_path} -> {audio_path}")
     try:
         if not os.path.exists(video_path):
-            raise FileNotFoundError(f"VÃ­deo de entrada nÃ£o encontrado: {video_path}")
+            raise FileNotFoundError(f"Vídeo de entrada não encontrado: {video_path}")
             
         comando = [
             FFMPEG_PATH, "-y",
@@ -64,27 +65,27 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
             comando, capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=True
         )
-        logger.info("Ãudio extraÃ­do com sucesso.")
+        logger.info("Áudio extraído com sucesso.")
         return True
     except Exception as e:
-        logger.error(f"Erro ao extrair Ã¡udio: {e}")
+        logger.error(f"Erro ao extrair áudio: {e}")
         return False
 
 def transcribe_and_chunk(audio_path: str) -> list:
     """
-    Transcreve Ã¡udio localmente usando Faster-Whisper acelerado por CUDA em FP16.
-    Implementa Smart Chunking agrupando de 1 a 3 palavras e cortando em silÃªncios > 0.3s.
-    Retorna uma lista de dicionÃ¡rios contendo: id, start, end, text.
+    Transcreve áudio localmente usando Faster-Whisper acelerado por CUDA em FP16.
+    Implementa Smart Chunking agrupando de 1 a 3 palavras e cortando em silêncios > 0.3s.
+    Retorna uma lista de dicionários contendo: id, start, end, text.
     """
-    logger.info(f"Iniciando transcriÃ§Ã£o com Faster-Whisper: {audio_path}")
+    logger.info(f"Iniciando transcrição com Faster-Whisper: {audio_path}")
     try:
         from faster_whisper import WhisperModel
         
-        # Carrega o modelo turbo localmente com CUDA e precisÃ£o FP16
+        # Carrega o modelo turbo localmente com CUDA e precisão FP16
         logger.info("Carregando WhisperModel (turbo) na GPU...")
         modelo = WhisperModel("turbo", device="cuda", compute_type="float16")
         
-        # Executa transcriÃ§Ã£o no nÃ­vel de palavras
+        # Executa transcrição no nível de palavras
         segmentos, info = modelo.transcribe(audio_path, word_timestamps=True, language="pt")
         
         palavras = []
@@ -108,23 +109,23 @@ def transcribe_and_chunk(audio_path: str) -> list:
         id_counter = 1
         
         for i, p in enumerate(palavras):
-            # Adiciona palavra ao cartÃ£o atual
+            # Adiciona palavra ao cartão atual
             cartao_atual.append(p)
             
-            # Verifica condiÃ§Ãµes de quebra
+            # Verifica condições de quebra
             quebrar = False
             
-            # 1. Limite de 3 palavras por cartÃ£o
+            # 1. Limite de 3 palavras por cartão
             if len(cartao_atual) >= 3:
                 quebrar = True
                 
-            # 2. SilÃªncio maior que 0.3 segundos entre a palavra atual e a prÃ³xima
+            # 2. Silêncio maior que 0.3 segundos entre a palavra atual e a próxima
             elif i < len(palavras) - 1:
                 silencio = palavras[i + 1]["start"] - p["end"]
                 if silencio > 0.3:
                     quebrar = True
                     
-            # 3. Ã‰ a Ãºltima palavra
+            # 3. É a última palavra
             elif i == len(palavras) - 1:
                 quebrar = True
                 
@@ -140,23 +141,23 @@ def transcribe_and_chunk(audio_path: str) -> list:
                 id_counter += 1
                 cartao_atual = []
                 
-        logger.info(f"Smart Chunking finalizado: {len(cartoes)} cartÃµes gerados.")
+        logger.info(f"Smart Chunking finalizado: {len(cartoes)} cartões gerados.")
         return cartoes
     except Exception as e:
-        logger.error(f"Erro na transcriÃ§Ã£o: {e}")
+        logger.error(f"Erro na transcrição: {e}")
         return []
 
 # -----------------------------------------------------------------------------
-# 2. RITMO E QUEBRA DE PADRÃƒO (EFEITOS VIRAIS)
+# 2. RITMO E QUEBRA DE PADRÃO (EFEITOS VIRAIS)
 # -----------------------------------------------------------------------------
 
 def remove_silences(video_path: str, output_path: str) -> bool:
     """
     Remove trechos silenciosos > 0.4s usando 'silencedetect' do FFmpeg para fazer jump cuts.
     """
-    logger.info(f"Analisando silÃªncios para jump cuts: {video_path}")
+    logger.info(f"Analisando silêncios para jump cuts: {video_path}")
     try:
-        # 1. Detectar silÃªncios
+        # 1. Detectar silêncios
         comando_detect = [
             FFMPEG_PATH, "-i", video_path,
             "-af", "silencedetect=noise=-35dB:d=0.4",
@@ -179,7 +180,7 @@ def remove_silences(video_path: str, output_path: str) -> bool:
                 parts = linha.split("silence_end:")
                 silence_ends.append(float(parts[1].split()[0]))
                 
-        # Obter duraÃ§Ã£o total do vÃ­deo
+        # Obter duração total do vídeo
         duracao = 0.0
         cmd_dur = [
             "ffprobe", "-v", "quiet", "-print_format", "json",
@@ -191,7 +192,7 @@ def remove_silences(video_path: str, output_path: str) -> bool:
         if res_dur.returncode == 0:
             duracao = float(json.loads(res_dur.stdout).get("format", {}).get("duration", 0.0))
             
-        logger.info(f"SilÃªncios detectados: {len(silence_starts)}. DuraÃ§Ã£o total: {duracao}s")
+        logger.info(f"Silêncios detectados: {len(silence_starts)}. Duração total: {duracao}s")
         
         # Calcular trechos de fala a manter
         trechos = []
@@ -204,12 +205,12 @@ def remove_silences(video_path: str, output_path: str) -> bool:
             trechos.append((inicio, duracao))
             
         if not trechos:
-            logger.warning("Nenhum trecho de Ã¡udio/fala detectado no vÃ­deo. Mantendo original.")
+            logger.warning("Nenhum trecho de áudio/fala detectado no vídeo. Mantendo original.")
             import shutil
             shutil.copy2(video_path, output_path)
             return True
             
-        # Construir filtro de concatenaÃ§Ã£o FFmpeg para jump cuts rÃ¡pidos
+        # Construir filtro de concatenação FFmpeg para jump cuts rápidos
         select_v = []
         select_a = []
         for i, (s, e) in enumerate(trechos):
@@ -224,7 +225,7 @@ def remove_silences(video_path: str, output_path: str) -> bool:
             "-i", video_path,
             "-vf", filt_v,
             "-af", filt_a,
-            "-c:v", "h264_nvenc",  # Usar aceleraÃ§Ã£o de GPU
+            "-c:v", "h264_nvenc",  # Usar aceleração de GPU
             "-c:a", "aac",
             output_path
         ]
@@ -233,21 +234,21 @@ def remove_silences(video_path: str, output_path: str) -> bool:
         logger.info(f"Jump cuts renderizados em: {output_path}")
         return True
     except Exception as e:
-        logger.error(f"Erro ao remover silÃªncios: {e}")
+        logger.error(f"Erro ao remover silêncios: {e}")
         return False
 
 def apply_auto_zoom(video_path: str, timestamps_picos: list, output_path: str) -> bool:
     """
-    Aplica efeito de Punch-In (15% a 20% zoom seco) nos instantes de picos ou Ãªnfases.
+    Aplica efeito de Punch-In (15% a 20% zoom seco) nos instantes de picos ou ênfases.
     Fica em zoom nos timestamps dados e volta ao enquadramento normal nos intervalos vazios.
     """
-    logger.info(f"Aplicando auto-zoom dinÃ¢mico baseados em {len(timestamps_picos)} picos.")
+    logger.info(f"Aplicando auto-zoom dinâmico baseados em {len(timestamps_picos)} picos.")
     try:
-        # Monta expressÃµes condicionais para o filtro crop do FFmpeg
+        # Monta expressões condicionais para o filtro crop do FFmpeg
         # Zoom de 15% significa cortar 85% do tamanho
         condicoes = []
         for t in timestamps_picos:
-            # MantÃ©m zoom por 1 segundo apÃ³s o pico
+            # Mantém zoom por 1 segundo após o pico
             condicoes.append(f"between(t,{t:.3f},{t+1.0:.3f})")
             
         if condicoes:
@@ -308,7 +309,7 @@ def auto_framing(video_path: str, output_path: str) -> bool:
         if target_w > width:
             target_w = width
             
-        logger.info(f"DimensÃµes originais: {width}x{height}. Largura alvo: {target_w}")
+        logger.info(f"Dimensões originais: {width}x{height}. Largura alvo: {target_w}")
         
         x_centers = []
         
@@ -330,12 +331,12 @@ def auto_framing(video_path: str, output_path: str) -> bool:
             
         cap.release()
         
-        # SuavizaÃ§Ã£o por mÃ©dia mÃ³vel (Janela de 30 frames para evitar jitter)
+        # Suavização por média móvel (Janela de 30 frames para evitar jitter)
         window = 30
         x_centers_smooth = np.convolve(x_centers, np.ones(window)/window, mode='same')
         
         # Re-enquadramento via OpenCV
-        logger.info("Processando re-enquadramento via OpenCV e gravando saÃ­da...")
+        logger.info("Processando re-enquadramento via OpenCV e gravando saída...")
         cap = cv2.VideoCapture(video_path)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, height))
@@ -357,7 +358,7 @@ def auto_framing(video_path: str, output_path: str) -> bool:
         cap.release()
         out.release()
         
-        # Adiciona o Ã¡udio original de volta ao vÃ­deo cropado
+        # Adiciona o áudio original de volta ao vídeo cropado
         temp_no_audio = output_path + ".temp.mp4"
         os.rename(output_path, temp_no_audio)
         
@@ -372,20 +373,20 @@ def auto_framing(video_path: str, output_path: str) -> bool:
         subprocess.run(cmd_merge, check=True)
         os.remove(temp_no_audio)
         
-        logger.info("Auto-framing concluÃ­do com sucesso!")
+        logger.info("Auto-framing concluído com sucesso!")
         return True
     except Exception as e:
         logger.error(f"Erro no auto-framing: {e}")
         return False
 
 # -----------------------------------------------------------------------------
-# 3. ESTILIZAÃ‡ÃƒO E DESIGN DE SOM (ESTILO DOCUMENTÃRIO)
+# 3. ESTILIZAÇÃO E DESIGN DE SOM (ESTILO DOCUMENTÁRIO)
 # -----------------------------------------------------------------------------
 
 def generate_subtitles_ass(lista_cartoes: list, ass_path: str) -> bool:
     """
     Cria arquivo de legenda .ass ultraestilizado.
-    EspecificaÃ§Ãµes: Caixa Alta, borda preta grossa, sombra suave, Pop-up e destaque KaraokÃª em amarelo.
+    Especificações: Caixa Alta, borda preta grossa, sombra suave, Pop-up e destaque Karaokê em amarelo.
     """
     logger.info(f"Gerando legendas ASS em: {ass_path}")
     try:
@@ -419,10 +420,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 # Pop-up animation tag: inicia pequena (80%) e escala para 100% em 100ms
                 anim_tag = r"{\fscx80\fscy80\t(0,100,\fscx100\fscy100)}"
                 
-                # Efeito KaraokÃª palavra por palavra
+                # Efeito Karaokê palavra por palavra
                 palavras = text.split()
+                if not palavras:
+                    continue  # cartão sem texto: evita divisão por zero
                 duracao_total = c["end"] - c["start"]
-                dur_por_palavra = (duracao_total / len(palavras)) * 100  # em centÃ©simos de segundo
+                dur_por_palavra = (duracao_total / len(palavras)) * 100  # em centésimos de segundo
                 
                 k_text = ""
                 for i, p in enumerate(palavras):
@@ -438,12 +441,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def apply_audio_ducking(video_path: str, background_music_path: str, output_path: str) -> bool:
     """
-    Mixa a mÃºsica de fundo aplicando sidechain compression (-25dB quando hÃ¡ voz).
+    Mixa a música de fundo aplicando sidechain compression (-25dB quando há voz).
     """
     logger.info("Aplicando sidechain audio ducking...")
     try:
-        # Filtro de compressÃ£o de Ã¡udio sidechain
-        # Reduz mÃºsica de fundo (track 1) baseada no volume da voz (track 0)
+        # Filtro de compressão de áudio sidechain
+        # Reduz música de fundo (track 1) baseada no volume da voz (track 0)
         filter_str = (
             "[0:a]asplit[voice_main][voice_side];"
             "[1:a]volume=0.3[music_low];"
@@ -472,17 +475,17 @@ def apply_audio_ducking(video_path: str, background_music_path: str, output_path
 
 def sync_sfx_and_brolls(video_path: str, lista_cartoes: list, pasta_assets: str, output_path: str) -> bool:
     """
-    Combina B-rolls (vÃ­deos de cobertura) e SFX baseados em palavras-chave presentes nos cartÃµes.
-    Procura arquivos whoosh.wav/pop.wav e vÃ­deos na pasta_assets.
+    Combina B-rolls (vídeos de cobertura) e SFX baseados em palavras-chave presentes nos cartões.
+    Procura arquivos whoosh.wav/pop.wav e vídeos na pasta_assets.
     """
-    logger.info("Iniciando sincronizaÃ§Ã£o de SFX e B-Rolls...")
+    logger.info("Iniciando sincronização de SFX e B-Rolls...")
     try:
-        # DicionÃ¡rio de trigger words
+        # Dicionário de trigger words
         sfx_keywords = {
             "ERRO": "pop.wav",
             "MUDAR": "whoosh.wav",
-            "VÃDEO": "pop.wav",
-            "IMPOSSÃVEL": "whoosh.wav"
+            "VÍDEO": "pop.wav",
+            "IMPOSSÍVEL": "whoosh.wav"
         }
         
         cmd_inputs = ["-i", video_path]
@@ -499,13 +502,13 @@ def sync_sfx_and_brolls(video_path: str, lista_cartoes: list, pasta_assets: str,
                     sfx_file = os.path.join(pasta_assets, sfx_keywords[clean_w])
                     if os.path.exists(sfx_file):
                         cmd_inputs += ["-i", sfx_file]
-                        # Atrasar Ã¡udio atÃ© o inÃ­cio da palavra
+                        # Atrasar áudio até o início da palavra
                         delay_ms = int(c["start"] * 1000)
                         amix_filters.append(f"[{input_idx}:a]adelay={delay_ms}|{delay_ms}[sfx_{input_idx}];")
                         overlay_filters.append(f"[sfx_{input_idx}]")
                         input_idx += 1
                         
-        # Mixagem de Ã¡udio
+        # Mixagem de áudio
         if len(overlay_filters) > 1:
             inputs_count = len(overlay_filters)
             audio_graph = "".join(amix_filters) + "".join(f"{overlay_filters[i]}" for i in range(inputs_count)) + f"amix=inputs={inputs_count}:duration=first[aout]"
@@ -521,15 +524,15 @@ def sync_sfx_and_brolls(video_path: str, lista_cartoes: list, pasta_assets: str,
         return False
 
 # -----------------------------------------------------------------------------
-# 4. COMPOSIÃ‡ÃƒO AVANÃ‡ADA
+# 4. COMPOSIÇÃO AVANÇADA
 # -----------------------------------------------------------------------------
 
 def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool:
     """
-    Renderiza legendas por trÃ¡s do locutor usando segmentaÃ§Ã£o de fundo do MediaPipe.
+    Renderiza legendas por trás do locutor usando segmentação de fundo do MediaPipe.
     Fluxo: Base original + Legenda ASS + Recorte do locutor por cima (Selfie Segmentation).
     """
-    logger.info("Aplicando mÃ¡scara 3D de texto (Text Behind Person)...")
+    logger.info("Aplicando máscara 3D de texto (Text Behind Person)...")
     try:
         import cv2
         import numpy as np
@@ -541,7 +544,7 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         modelo_path = r"D:\CORTE VIRAL\files\selfie_segmenter.tflite"
         if not os.path.exists(modelo_path):
             import urllib.request
-            logger.info("Baixando modelo selfie segmenter para mÃ¡scara 3D...")
+            logger.info("Baixando modelo selfie segmenter para máscara 3D...")
             url = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite"
             urllib.request.urlretrieve(url, modelo_path)
             
@@ -552,7 +555,7 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         )
         segmenter = mp_vision.ImageSegmenter.create_from_options(options)
         
-        # 1. Primeiro cria o vÃ­deo temporÃ¡rio com legendas normais aplicadas
+        # 1. Primeiro cria o vídeo temporário com legendas normais aplicadas
         escaped_ass_path = ass_path.replace("\\", "/").replace(":", "\\:")
         temp_subbed = output_path + ".subbed.mp4"
         cmd_sub = [
@@ -564,7 +567,7 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         ]
         subprocess.run(cmd_sub, check=True)
         
-        # 2. Segmentar locutor frame a frame e compor: original com mÃ¡scara sobre o vÃ­deo com legenda
+        # 2. Segmentar locutor frame a frame e compor: original com máscara sobre o vídeo com legenda
         cap_orig = cv2.VideoCapture(video_path)
         cap_sub = cv2.VideoCapture(temp_subbed)
         
@@ -587,11 +590,11 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
             results = segmenter.segment(mp_image)
             category_mask = results.category_mask.numpy_view()
             
-            # MÃ¡scara binÃ¡ria do corpo
+            # Máscara binária do corpo
             mask = category_mask > 0.5
             mask_3d = np.dstack([mask] * 3)
             
-            # ComposiÃ§Ã£o: Se pessoa (mÃ¡scara), usa original. SenÃ£o, usa com legenda.
+            # Composição: Se pessoa (máscara), usa original. Senão, usa com legenda.
             composite = np.where(mask_3d, frame_orig, frame_sub)
             out.write(composite)
             
@@ -602,7 +605,7 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         if os.path.exists(temp_subbed):
             os.remove(temp_subbed)
             
-        # Adicionar o Ã¡udio de volta
+        # Adicionar o áudio de volta
         temp_no_audio = output_path + ".temp.mp4"
         os.rename(output_path, temp_no_audio)
         
@@ -617,16 +620,16 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         subprocess.run(cmd_merge, check=True)
         os.remove(temp_no_audio)
         
-        logger.info("Texto 3D (por trÃ¡s do locutor) aplicado.")
+        logger.info("Texto 3D (por trás do locutor) aplicado.")
         return True
     except Exception as e:
-        logger.error(f"Erro ao aplicar mÃ¡scara 3D de texto: {e}")
+        logger.error(f"Erro ao aplicar máscara 3D de texto: {e}")
         return False
 
 def render_split_screen(video_topo_path: str, video_base_path: str, output_path: str) -> bool:
     """
-    Empilha verticalmente o vÃ­deo do topo e o vÃ­deo da base no formato 9:16.
-    Ajusta resoluÃ§Ãµes e concatena a duraÃ§Ã£o para o menor tamanho comum.
+    Empilha verticalmente o vídeo do topo e o vídeo da base no formato 9:16.
+    Ajusta resoluções e concatena a duração para o menor tamanho comum.
     """
     logger.info("Criando Split-Screen vertical...")
     try:
@@ -644,7 +647,7 @@ def render_split_screen(video_topo_path: str, video_base_path: str, output_path:
             "-i", video_base_path,
             "-filter_complex", filter_complex,
             "-map", "[vsplit]",
-            "-map", "0:a?",  # MantÃ©m Ã¡udio do vÃ­deo do topo
+            "-map", "0:a?",  # Mantém áudio do vídeo do topo
             "-shortest",     # Corta no menor tempo
             "-c:v", "h264_nvenc",
             "-c:a", "aac",
@@ -652,7 +655,7 @@ def render_split_screen(video_topo_path: str, video_base_path: str, output_path:
         ]
         
         subprocess.run(comando, check=True)
-        logger.info(f"Split-Screen concluÃ­do: {output_path}")
+        logger.info(f"Split-Screen concluído: {output_path}")
         return True
     except Exception as e:
         logger.error(f"Erro no split screen: {e}")
@@ -660,37 +663,37 @@ def render_split_screen(video_topo_path: str, video_base_path: str, output_path:
 
 
 # -----------------------------------------------------------------------------
-# 5. MÃ“DULO DE INTELIGÃŠNCIA ARTIFICIAL CONTEXTUAL
+# 5. MÓDULO DE INTELIGÊNCIA ARTIFICIAL CONTEXTUAL
 # -----------------------------------------------------------------------------
 
 def analyze_context_for_viral_effects(json_timestamps: list) -> list:
     """
     Envia o roteiro estruturado para um modelo de linguagem local (via Ollama)
-    com um prompt focado em direÃ§Ã£o criativa e ediÃ§Ã£o.
-    Retorna o JSON dos cartÃµes enriquecido com: zoom, sfx, broll_keyword e text_style.
-    Caso o Ollama esteja inacessÃ­vel, ativa um fallback heurÃ­stico local.
+    com um prompt focado em direção criativa e edição.
+    Retorna o JSON dos cartões enriquecido com: zoom, sfx, broll_keyword e text_style.
+    Caso o Ollama esteja inacessível, ativa um fallback heurístico local.
     """
-    logger.info("Iniciando anÃ¡lise contextual de efeitos com IA...")
+    logger.info("Iniciando análise contextual de efeitos com IA...")
     
     # Prepara o roteiro textual para o prompt
     roteiro = []
     for item in json_timestamps:
-        roteiro.append(f"ID {item['id']}: {item['text']} (InÃ­cio: {item['start']}s)")
+        roteiro.append(f"ID {item['id']}: {item['text']} (Início: {item['start']}s)")
         
     roteiro_str = "\n".join(roteiro)
     
-    prompt = f"""VocÃª Ã© um Diretor de VÃ­deo de Alta RetenÃ§Ã£o (estilo TikTok/Reels).
-Analise o roteiro a seguir e decida as intenÃ§Ãµes de ediÃ§Ã£o para cada cartÃ£o (ID).
-Para cada ID, vocÃª deve decidir:
-1. 'zoom': true/false (true para momentos de Ãªnfase, gancho inicial, mudanÃ§a de assunto ou palavras fortes).
+    prompt = f"""Você é um Diretor de Vídeo de Alta Retenção (estilo TikTok/Reels).
+Analise o roteiro a seguir e decida as intenções de edição para cada cartão (ID).
+Para cada ID, você deve decidir:
+1. 'zoom': true/false (true para momentos de ênfase, gancho inicial, mudança de assunto ou palavras fortes).
 2. 'sfx': nome do efeito sonoro ('cinematic_boom', 'whoosh', 'pop', 'vinyl_pause', 'scratch' ou null).
-3. 'broll_keyword': palavra-chave curta em inglÃªs para buscar um vÃ­deo de cobertura correspondente (ex: 'money', 'crypto', 'confused', 'success', 'city' ou null).
+3. 'broll_keyword': palavra-chave curta em inglês para buscar um vídeo de cobertura correspondente (ex: 'money', 'crypto', 'confused', 'success', 'city' ou null).
 4. 'text_style': se o estilo deve ser 'emphasis' (destaque em laranja/cor chamativa) ou 'standard' (branco).
 
 Roteiro:
 {roteiro_str}
 
-Retorne estritamente um JSON no seguinte formato (sem explicaÃ§Ãµes ou comentÃ¡rios adicionais):
+Retorne estritamente um JSON no seguinte formato (sem explicações ou comentários adicionais):
 [
   {{"id": 1, "zoom": true, "sfx": "whoosh", "broll_keyword": "ideas", "text_style": "emphasis"}},
   ...
@@ -722,15 +725,15 @@ Retorne estritamente um JSON no seguinte formato (sem explicaÃ§Ãµes ou comen
             decisions = json.loads(response_text)
             for d in decisions:
                 ai_decisions[int(d["id"])] = d
-            logger.info("AnÃ¡lise contextual da IA local (Ollama) concluÃ­da com sucesso.")
+            logger.info("Análise contextual da IA local (Ollama) concluída com sucesso.")
     except Exception as e:
-        logger.warning(f"Ollama local indisponÃ­vel ou erro na resposta ({e}). Usando analisador heurÃ­stico local.")
-        # Fallback HeurÃ­stico Local baseado em regras simples de PNL
-        palavras_impacto = {"ERRO", "MUDAR", "IMPOSSÃVEL", "DINHEIRO", "SEGREDO", "NUNCA", "APRENDA", "VÃDEO", "ATENÃ‡ÃƒO", "RETENÃ‡ÃƒO"}
+        logger.warning(f"Ollama local indisponível ou erro na resposta ({e}). Usando analisador heurístico local.")
+        # Fallback Heurístico Local baseado em regras simples de PNL
+        palavras_impacto = {"ERRO", "MUDAR", "IMPOSSÍVEL", "DINHEIRO", "SEGREDO", "NUNCA", "APRENDA", "VÍDEO", "ATENÇÃO", "RETENÇÃO"}
         palavras_broll = {
             "DINHEIRO": "money",
             "MUDAR": "transition",
-            "VÃDEO": "camera",
+            "VÍDEO": "camera",
             "ERRO": "mistake",
             "SEGREDO": "mystery",
             "BRASIL": "brazil",
@@ -742,7 +745,7 @@ Retorne estritamente um JSON no seguinte formato (sem explicaÃ§Ãµes ou comen
             text = item["text"].upper()
             words = text.split()
             
-            # PadrÃµes heurÃ­sticos
+            # Padrões heurísticos
             zoom = idx == 0 or any(w in palavras_impacto for w in words) or (idx % 4 == 0)
             sfx = "whoosh" if zoom and idx > 0 else ("pop" if any(w in palavras_impacto for w in words) else None)
             
@@ -763,7 +766,7 @@ Retorne estritamente um JSON no seguinte formato (sem explicaÃ§Ãµes ou comen
                 "text_style": style
             }
             
-    # Aplica as decisÃµes no JSON original
+    # Aplica as decisões no JSON original
     resultado_enriquecido = []
     for item in json_timestamps:
         dec = ai_decisions.get(item["id"], {
@@ -786,13 +789,13 @@ Retorne estritamente um JSON no seguinte formato (sem explicaÃ§Ãµes ou comen
 
 def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_path: str, background_music_path: str = None, pasta_assets: str = None) -> bool:
     """
-    Traduz todas as decisÃµes da IA em filtros lineares do FFmpeg de forma integrada em uma Ãºnica passagem:
-    1. Executa jump-cuts (remoÃ§Ã£o de silÃªncio).
-    2. Aplica re-enquadramento (Face-Tracking) e zoom dinÃ¢mico (Punch-In de 15% nos picos da IA).
+    Traduz todas as decisões da IA em filtros lineares do FFmpeg de forma integrada em uma única passagem:
+    1. Executa jump-cuts (remoção de silêncio).
+    2. Aplica re-enquadramento (Face-Tracking) e zoom dinâmico (Punch-In de 15% nos picos da IA).
     3. Renderiza legendas ASS estilizadas com destaque colorido.
-    4. Sincroniza SFX (pop/whoosh) nos tempos das palavras e aplica ducking de Ã¡udio na trilha.
+    4. Sincroniza SFX (pop/whoosh) nos tempos das palavras e aplica ducking de áudio na trilha.
     """
-    logger.info(f"Compilando ediÃ§Ã£o de IA contextual para: {output_path}")
+    logger.info(f"Compilando edição de IA contextual para: {output_path}")
     try:
         import cv2
         import numpy as np
@@ -800,15 +803,15 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision as mp_vision
         
-        # 1. Analisa e remove silÃªncios antes do processamento frame-a-frame
+        # 1. Analisa e remove silêncios antes do processamento frame-a-frame
         fd_temp_jc, path_temp_jc = tempfile.mkstemp(suffix="_jc.mp4")
         os.close(fd_temp_jc)
         
         if not remove_silences(video_path, path_temp_jc):
-            logger.warning("Falha ao prÃ©-processar silÃªncios. Usando vÃ­deo original.")
+            logger.warning("Falha ao pré-processar silêncios. Usando vídeo original.")
             shutil.copy2(video_path, path_temp_jc)
             
-        # 2. Configura detector facial para enquadramento e zoom dinÃ¢mico
+        # 2. Configura detector facial para enquadramento e zoom dinâmico
         modelo_path = r"D:\CORTE VIRAL\files\face_detector.tflite"
         base_options = mp_python.BaseOptions(model_asset_path=modelo_path)
         options = mp_vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=0.35)
@@ -823,7 +826,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
         if target_w > width:
             target_w = width
             
-        # Primeiro passe: Rastreia a face em cada frame do vÃ­deo
+        # Primeiro passe: Rastreia a face em cada frame do vídeo
         x_centers = []
         while cap.isOpened():
             ret, frame = cap.read()
@@ -840,7 +843,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
             x_centers.append(x_center)
         cap.release()
         
-        # SuavizaÃ§Ã£o
+        # Suavização
         window = 30
         x_centers_smooth = np.convolve(x_centers, np.ones(window)/window, mode='same')
         
@@ -860,7 +863,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
                 
             time_sec = frame_idx / fps
             
-            # Verifica se estÃ¡ em perÃ­odo de zoom decidido pela IA
+            # Verifica se está em período de zoom decidido pela IA
             em_zoom = False
             for item in json_ai_processed:
                 if item.get("zoom") and item["start"] <= time_sec <= item["end"]:
@@ -886,7 +889,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
         cap.release()
         out.release()
         
-        # Adiciona Ã¡udio do jumpcut de volta ao vÃ­deo cropado
+        # Adiciona áudio do jumpcut de volta ao vídeo cropado
         fd_temp_merged, path_temp_merged = tempfile.mkstemp(suffix="_merge.mp4")
         os.close(fd_temp_merged)
         
@@ -919,7 +922,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
         ]
         subprocess.run(cmd_sub, check=True)
         
-        # 4. Mixagem final de efeitos sonoros e mÃºsica de fundo
+        # 4. Mixagem final de efeitos sonoros e música de fundo
         # Se background_music_path ou SFX forem passados, aplica sidechain compressor
         inputs = ["-i", path_temp_subbed]
         amix_filters = ["[0:a]"]
@@ -960,7 +963,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
                 output_path
             ]
         else:
-            # Sem mÃºsica de fundo, apenas mixa SFX se houver
+            # Sem música de fundo, apenas mixa SFX se houver
             if input_idx > 1:
                 audio_graph = "".join(amix_filters)
                 audio_graph += "".join(f"[sfx_{i}]" for i in range(1, input_idx))
@@ -977,16 +980,16 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
                 comando_final = [FFMPEG_PATH, "-y", "-i", path_temp_subbed, "-c", "copy", output_path]
                 
         subprocess.run(comando_final, check=True)
-        logger.info(f"EdiÃ§Ã£o de IA contextual compilada com sucesso: {output_path}")
+        logger.info(f"Edição de IA contextual compilada com sucesso: {output_path}")
         
-        # Limpeza de temporÃ¡rios
+        # Limpeza de temporários
         for p in [path_temp_jc, path_temp_cropped, path_temp_merged, path_ass, path_temp_subbed]:
             if os.path.exists(p):
                 os.remove(p)
                 
         return True
     except Exception as e:
-        logger.error(f"Erro ao compilar ediÃ§Ã£o de IA: {e}")
+        logger.error(f"Erro ao compilar edição de IA: {e}")
         return False
 
 

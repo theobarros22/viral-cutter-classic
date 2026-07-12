@@ -70,9 +70,9 @@ class TestCore(unittest.TestCase):
             {"x": 0.33, "y": 0.25, "w": 0.07},  # estátua na estante
             {"x": 0.50, "y": 0.90, "w": 0.02},  # objeto na mesa
         ]
-        xs, ys = _filtrar_rostos_na_zona_de_cabeca(rostos)
+        xs, ys, ws = _filtrar_rostos_na_zona_de_cabeca(rostos)
         self.assertEqual(sorted(round(x, 2) for x in xs), [0.10, 0.94])
-        grupo = _agrupar_posicoes_cena(xs, ys)
+        grupo = _agrupar_posicoes_cena(xs, ys, ws)
         self.assertEqual(grupo["n_pessoas"], 2)
         self.assertAlmostEqual(grupo["lado_b"], 0.94, delta=0.02)
 
@@ -83,7 +83,7 @@ class TestCore(unittest.TestCase):
             {"x": 0.30, "y": 0.10, "w": 0.05},
             {"x": 0.70, "y": 0.12, "w": 0.05},
         ]
-        xs, ys = _filtrar_rostos_na_zona_de_cabeca(rostos)
+        xs, ys, ws = _filtrar_rostos_na_zona_de_cabeca(rostos)
         self.assertEqual(len(xs), 2)
 
     def test_movimento_labial_ambiguo_retorna_none(self):
