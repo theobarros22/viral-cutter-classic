@@ -16,3 +16,4 @@ studio/server-error.log
 studio/exports/
 studio/projects/
 *.zip
+.worktrees/
