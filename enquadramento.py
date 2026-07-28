@@ -85,6 +85,11 @@ ZONA_ROSTO_Y_MAX = 0.72
 FATOR_ZOOM_ROSTO = 4.5    # altura do crop ≈ 4.5x a largura do rosto (px)
 ZOOM_MIN_ALTURA = 0.50    # nunca fecha mais que 50% da altura (qualidade)
 POSICAO_ROSTO_QUADRO = 0.40  # rosto a 40% do topo do quadro (regra dos terços)
+# A janela horizontal precisa comportar mais que o rosto: em planos de
+# podcast a pessoa se inclina, gesticula e pode estar parcialmente fora do
+# centro. Sem essa folga, o centro correto ainda produz um rosto cortado nas
+# bordas do clipe vertical.
+FOLGA_HORIZONTAL_ROSTO = 2.8  # largura mínima do crop em relação ao rosto
 
 # Cache da análise visual (cenas + rostos) por clipe.
 # Chave: (caminho absoluto, tamanho, mtime, perfil). Evita refazer toda a
@@ -92,6 +97,111 @@ POSICAO_ROSTO_QUADRO = 0.40  # rosto a 40% do topo do quadro (regra dos terços)
 _cache_analise_visual: dict = {}
 _CACHE_ANALISE_MAX = 12  # limite de clipes em memória
 
+
+def _classificar_modos_fala(
+    posicoes: list,
+    xa: float,
+    xb: float,
+    fps: float,
+    limiar_s: float = 3.0,
+) -> list:
+    """Mantém split na conversa e destaca após fala contínua prolongada."""
+    if abs(float(xb) - float(xa)) < 0.12:
+        return ["SOLO_A"] * len(posicoes)
+
+    minimo_frames = max(1, int(np.ceil(float(fps or 30.0) * limiar_s)))
+    modos = []
+    lado_atual = None
+    frames_continuos = 0
+    modo = "SPLIT"
+
+    for pos in posicoes:
+        if pos is None:
+            modos.append(modo)
+            continue
+        lado = "A" if abs(float(pos) - xa) <= abs(float(pos) - xb) else "B"
+        if lado != lado_atual:
+            lado_atual = lado
+            frames_continuos = 1
+            modo = "SPLIT"
+        else:
+            frames_continuos += 1
+            if frames_continuos >= minimo_frames:
+                modo = f"SOLO_{lado}"
+        modos.append(modo)
+    return modos
+
+
+def _calcular_crop_seguro(
+    alvos: list,
+    largura: int,
+    altura: int,
+    proporcao: float,
+) -> tuple:
+    """Calcula crop conservador, centralizado no conjunto humano e sem zoom excessivo."""
+    if not alvos:
+        raise ValueError("Nenhum alvo humano para enquadrar.")
+
+    largura_max = min(float(largura), float(altura) * float(proporcao))
+    maior_rosto = max(max(0.01, float(a[2])) * largura for a in alvos)
+    centros_x = [float(a[0]) * largura for a in alvos]
+    centro_x = float(np.mean(centros_x))
+    esquerda_humana = min(cx - maior_rosto * 1.6 for cx in centros_x)
+    direita_humana = max(cx + maior_rosto * 1.6 for cx in centros_x)
+    largura_desejada = max(largura_max * 0.85, maior_rosto * 4.0, direita_humana - esquerda_humana)
+    crop_w = int(round(min(largura_max, largura_desejada)))
+    crop_w = max(2, crop_w + crop_w % 2)
+    crop_h = int(round(crop_w / float(proporcao)))
+    crop_h = max(2, crop_h + crop_h % 2)
+
+    if crop_h > altura:
+        crop_h = altura - altura % 2
+        crop_w = int(round(crop_h * float(proporcao)))
+        crop_w += crop_w % 2
+    if crop_w > largura:
+        crop_w = largura - largura % 2
+        crop_h = int(round(crop_w / float(proporcao)))
+        crop_h += crop_h % 2
+
+    x = int(round(centro_x - crop_w / 2))
+    x = max(0, min(largura - crop_w, x))
+    rosto_y = float(np.mean([float(a[1]) for a in alvos])) * altura
+    y = int(round(rosto_y - crop_h * POSICAO_ROSTO_QUADRO))
+    y = max(0, min(altura - crop_h, y))
+    return x, y, crop_w, crop_h
+
+def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int):
+    """Compõe SOLO/GRUPO/SPLIT com cada pessoa centralizada e quadro aberto."""
+    altura, largura = frame.shape[:2]
+
+    def painel(alvos, destino_w, destino_h):
+        x, y, w, h = _calcular_crop_seguro(
+            alvos, largura, altura, destino_w / float(destino_h)
+        )
+        recorte = frame[y:y + h, x:x + w]
+        return cv2.resize(
+            recorte, (destino_w, destino_h), interpolation=INTERPOLACAO_EXPORT
+        )
+
+    modo = plano.get("modo", "SOLO_A")
+    alvo_a = (
+        float(plano["xa"]), float(plano.get("ya", 0.40)),
+        float(plano.get("ta", 0.0)),
+    )
+    alvo_b = (
+        float(plano.get("xb", plano["xa"])), float(plano.get("yb", 0.40)),
+        float(plano.get("tb", plano.get("ta", 0.0))),
+    )
+
+    if modo == "SPLIT":
+        topo_h = saida_h // 2
+        base_h = saida_h - topo_h
+        topo = painel([alvo_a], saida_w, topo_h)
+        base = painel([alvo_b], saida_w, base_h)
+        return np.vstack((topo, base))
+    if modo == "GRUPO":
+        return painel([alvo_a, alvo_b], saida_w, saida_h)
+    return painel([alvo_a], saida_w, saida_h)
 
 def aplicar_enquadramento(
     caminho_entrada: str,
@@ -247,47 +357,7 @@ def aplicar_enquadramento(
 
         modo = p["modo"]
 
-        # Corte de cena: crop salta direto para o novo alvo (corte seco)
-        if frame_idx in inicios_cena:
-            x_suave = None
-            zoom_suave = None
-
-        # Único modo de crop: 9:16 de 1 alvo. "CENTRAL" (0 ou 2+ pessoas)
-        # usa x=0.5 fixo; "SOLO_A" segue a pessoa única detectada.
-        x_suave = _aproximar(x_suave, p["xa"])
-
-        # ── Zoom adaptativo ao rosto ──────────────────────────────────────
-        # Janela proporcional ao tamanho do rosto: plano aberto fecha na
-        # pessoa (parece direção de câmera); câmera já fechada usa o quadro
-        # inteiro. ta=0 (sem detecção confiável) = sem zoom, comportamento
-        # tradicional.
-        ta = p.get("ta", 0.0)
-        if ta > 0:
-            crop_h_alvo = ta * largura * FATOR_ZOOM_ROSTO
-            crop_h_alvo = max(altura * ZOOM_MIN_ALTURA, min(altura, crop_h_alvo))
-        else:
-            crop_h_alvo = float(altura)
-        zoom_suave = _aproximar(zoom_suave, crop_h_alvo)
-
-        crop_h = int(zoom_suave)
-        crop_w = int(crop_h * 9 / 16)
-        if crop_w > largura:
-            crop_w = largura
-            crop_h = int(crop_w * 16 / 9)
-        crop_h -= crop_h % 2
-        crop_w -= crop_w % 2
-
-        x_crop = _calcular_x_crop(x_suave, largura, crop_w)
-        if crop_h >= altura:
-            y_crop = 0
-            crop_h = altura
-        else:
-            # Rosto na regra dos terços do quadro
-            y_crop = int(p.get("ya", 0.40) * altura - POSICAO_ROSTO_QUADRO * crop_h)
-            y_crop = max(0, min(altura - crop_h, y_crop))
-
-        cortado = frame[y_crop:y_crop + crop_h, x_crop:x_crop + crop_w]
-        frame_final = cv2.resize(cortado, (saida_w, saida_h), interpolation=INTERPOLACAO_EXPORT)
+        frame_final = _compor_frame_seguro(frame, p, saida_w, saida_h)
 
         try:
             processo_ffmpeg.stdin.write(frame_final.tobytes())
@@ -600,6 +670,7 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
         ya = cena.get("lado_a_y", Y_PADRAO)
         yb = cena.get("lado_b_y", Y_PADRAO)
         ta = cena.get("lado_a_tam", 0.0)
+        tb = cena.get("lado_b_tam", 0.0)
 
         if cena["n_pessoas"] == 0:
             # Sem rosto detectado nesta cena (rostos de perfil enganam o
@@ -636,33 +707,42 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                 plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya, "ta": ta}
             continue
 
-        # Duas ou mais pessoas: crop segue QUEM ESTÁ FALANDO (posicoes_falante
-        # — voz + movimento labial, já validado), não a posição de rosto por
-        # cena. A posição de rosto por cena (clustering em "lado A/lado B")
-        # já mirou num objeto decorativo com formato de rosto (busto na
-        # estante); quem-fala é o único sinal 100% confiável — decoração
-        # nunca fala. Sem fala detectada no momento, mantém o último alvo
-        # válido (nunca pula pro centro no meio de uma cena só por silêncio).
-        # Ver seção 10/11 do RELATORIO_COMPLETO_2026-07-03.md.
-        x_alvo_atual = ultimo_xa if ultimo_modo_valido != "CENTRAL" else 0.5
-        # Zoom em cena de 2+: usa o MENOR rosto dos dois lados como base —
-        # garante que ninguém fique gigante demais quando o crop alterna.
-        ta_cena = min(
-            [t for t in (cena.get("lado_a_tam", 0.0), cena.get("lado_b_tam", 0.0)) if t > 0]
-            or [0.0]
-        )
-        for f in range(ini, min(fim, total_frames)):
-            pos = posicoes_falante[f] if f < len(posicoes_falante) else None
-            if pos is not None:
-                x_alvo_atual = pos
-            plano[f] = {"modo": "SOLO_A", "xa": x_alvo_atual, "xb": x_alvo_atual,
-                        "ya": Y_PADRAO, "yb": Y_PADRAO, "ta": ta_cena}
+        # Duas pessoas próximas cabem juntas; separadas usam split durante
+        # conversa e solo apenas após 3 segundos contínuos da mesma voz.
+        if abs(xb - xa) <= 0.34:
+            for f in range(ini, min(fim, total_frames)):
+                plano[f] = {
+                    "modo": "GRUPO", "xa": xa, "xb": xb,
+                    "ya": ya, "yb": yb, "ta": ta, "tb": tb,
+                }
+            ultimo_modo_valido = "GRUPO"
+            ultimo_xa, ultimo_xb = xa, xb
+            ultimo_ya, ultimo_yb = ya, yb
+            ultimo_ta = max(ta, tb)
+            continue
 
-        ultimo_modo_valido = "SOLO_A"
-        ultimo_xa = ultimo_xb = x_alvo_atual
-        ultimo_ya = ultimo_yb = Y_PADRAO
-        ultimo_ta = ta_cena
+        posicoes_cena = [
+            posicoes_falante[f] if f < len(posicoes_falante) else None
+            for f in range(ini, min(fim, total_frames))
+        ]
+        modos = _classificar_modos_fala(posicoes_cena, xa, xb, fps)
+        for deslocamento, f in enumerate(range(ini, min(fim, total_frames))):
+            modo = modos[deslocamento]
+            if modo == "SOLO_A":
+                plano[f] = {"modo": modo, "xa": xa, "xb": xa,
+                            "ya": ya, "yb": ya, "ta": ta, "tb": ta}
+            elif modo == "SOLO_B":
+                plano[f] = {"modo": modo, "xa": xb, "xb": xb,
+                            "ya": yb, "yb": yb, "ta": tb, "tb": tb}
+            else:
+                plano[f] = {"modo": "SPLIT", "xa": xa, "xb": xb,
+                            "ya": ya, "yb": yb, "ta": ta, "tb": tb}
 
+        ultimo = plano[min(fim, total_frames) - 1]
+        ultimo_modo_valido = ultimo["modo"]
+        ultimo_xa, ultimo_xb = ultimo["xa"], ultimo["xb"]
+        ultimo_ya, ultimo_yb = ultimo["ya"], ultimo["yb"]
+        ultimo_ta = ultimo.get("ta", 0.0)
     # Preenche buracos — usa último modo válido, nunca CENTRAL
     ultimo = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
               "ya": ultimo_ya, "yb": ultimo_yb, "ta": ultimo_ta}
@@ -684,6 +764,56 @@ def _calcular_x_crop(x_centro_norm: float, largura: int, crop_w: int) -> int:
     """
     x = int(x_centro_norm * largura - crop_w / 2)
     return max(0, min(largura - crop_w, x))
+
+
+def _recortar_com_margem(
+    frame: np.ndarray,
+    x_centro_norm: float,
+    y_inicio: int,
+    crop_w: int,
+    crop_h: int,
+) -> np.ndarray:
+    """Recorta o alvo mesmo quando ele está encostado na borda do original.
+
+    Um crop 9:16 tradicional não consegue centralizar uma pessoa que está na
+    extrema esquerda/direita sem cortar parte do rosto. Neste caso, cria uma
+    pequena margem refletida somente fora do quadro original e mantém o alvo
+    no centro da janela. A imagem real nunca é esticada nem deformada.
+    """
+    altura, largura = frame.shape[:2]
+    crop_w = max(2, min(int(crop_w), max(2, largura)))
+    crop_h = max(2, int(crop_h))
+
+    x_centro = float(np.clip(x_centro_norm if x_centro_norm is not None else 0.5, 0.0, 1.0)) * largura
+    x_inicio = int(round(x_centro - crop_w / 2))
+    y_inicio = int(y_inicio)
+
+    pad_esq = max(0, -x_inicio)
+    pad_dir = max(0, x_inicio + crop_w - largura)
+    pad_top = max(0, -y_inicio)
+    pad_bottom = max(0, y_inicio + crop_h - altura)
+
+    if pad_esq or pad_dir or pad_top or pad_bottom:
+        frame = cv2.copyMakeBorder(
+            frame,
+            pad_top,
+            pad_bottom,
+            pad_esq,
+            pad_dir,
+            cv2.BORDER_REFLECT_101,
+        )
+        x_inicio += pad_esq
+        y_inicio += pad_top
+
+    y_inicio = max(0, min(frame.shape[0] - crop_h, y_inicio))
+    x_inicio = max(0, min(frame.shape[1] - crop_w, x_inicio))
+    recorte = frame[y_inicio:y_inicio + crop_h, x_inicio:x_inicio + crop_w]
+
+    # A borda refletida pode ser menor que o esperado em vídeos muito
+    # pequenos; garante que o encoder nunca receba um frame vazio.
+    if recorte.shape[0] != crop_h or recorte.shape[1] != crop_w:
+        recorte = cv2.resize(recorte, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
+    return recorte
 
 
 def _obter_info_video(caminho_video: str) -> dict:

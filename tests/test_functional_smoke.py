@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,14 +34,19 @@ class TesteFuncionalPipeline(unittest.TestCase):
             ]
             subprocess.run(comando, check=True, capture_output=True)
 
-            resultados = etapa3_processar(
-                str(entrada),
-                str(saida),
-                [{"inicio": 0, "fim": 1.5, "titulo": "Teste funcional"}],
-                qualidade="720p",
-                perfil="rapido",
-                retomar=False,
-            )
+            pessoa_validada = {
+                "id": 0, "nome": "Pessoa de teste", "posicao_x": 0.5,
+                "posicao_y": 0.35, "tamanho": 0.2,
+            }
+            with patch.dict("pipeline._cache", {"pessoas": [pessoa_validada]}):
+                resultados = etapa3_processar(
+                    str(entrada),
+                    str(saida),
+                    [{"inicio": 0, "fim": 1.5, "titulo": "Teste funcional"}],
+                    qualidade="720p",
+                    perfil="rapido",
+                    retomar=False,
+                )
 
             self.assertEqual(len(resultados), 1)
             arquivo = resultados[0]["arquivo"]

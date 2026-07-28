@@ -15,6 +15,9 @@ from cortes import (
 from enquadramento import (
     _agrupar_posicoes_cena,
     _calcular_x_crop,
+    _calcular_crop_seguro,
+    _classificar_modos_fala,
+    _compor_frame_seguro,
     _filtrar_rostos_na_zona_de_cabeca,
     _gerar_plano,
 )
@@ -28,6 +31,7 @@ from rostos import (
     _agrupar_por_identidade,
     _caminho_modelo_reconhecimento,
     _inicializar_detector,
+    _escolher_fallback_humano,
     _limpar_deteccoes,
     detectar_pessoas_no_video,
     detectar_rostos_robusto,
@@ -86,6 +90,13 @@ class TestCore(unittest.TestCase):
         xs, ys, ws = _filtrar_rostos_na_zona_de_cabeca(rostos)
         self.assertEqual(len(xs), 2)
 
+    def test_multiplas_pessoas_iniciam_na_primeira_pessoa_nao_no_centro(self):
+        pessoas = [{"posicao_x": 0.25}, {"posicao_x": 0.75}]
+        self.assertEqual(_escolher_fallback_humano(pessoas, ultimo=None), 0.25)
+
+    def test_sem_pessoa_validada_falha_em_vez_de_centralizar(self):
+        with self.assertRaises(RuntimeError):
+            _escolher_fallback_humano([], ultimo=None)
     def test_movimento_labial_ambiguo_retorna_none(self):
         # Dois rostos com boca ocluída (mic de mesa): frames quase idênticos,
         # sem movimento real. Antes caía sempre em rostos[0]["x"] — viés
@@ -157,6 +168,27 @@ class TestCore(unittest.TestCase):
             })
 
         pessoas = _agrupar_por_identidade(deteccoes, ReconhecedorFake(), total_amostras=6)
+        self.assertEqual(len(pessoas), 2)
+        self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [3, 3])
+    def test_identidade_cai_para_posicao_quando_sface_nao_extrai_embeddings(self):
+        class ReconhecedorSemEmbedding:
+            def feature(self, _imagem):
+                return None
+
+        deteccoes = []
+        for frame in (1, 2, 3):
+            for x in (0.2, 0.8):
+                deteccoes.append({
+                    "posicao_x": x,
+                    "posicao_y": 0.45,
+                    "frame_idx": frame,
+                    "recorte": np.full((40, 40, 3), 80, dtype=np.uint8),
+                })
+
+        pessoas = _agrupar_por_identidade(
+            deteccoes, ReconhecedorSemEmbedding(), total_amostras=6
+        )
+
         self.assertEqual(len(pessoas), 2)
         self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [3, 3])
 
@@ -231,6 +263,44 @@ class TestCore(unittest.TestCase):
     def test_nome_vazio_tem_fallback(self):
         self.assertEqual(sanitizar_nome(""), "clipe")
 
+    def test_conversa_alternada_mantem_split(self):
+        modos = _classificar_modos_fala([0.25, 0.75] * 60, 0.25, 0.75, fps=30)
+        self.assertEqual(set(modos), {"SPLIT"})
+
+    def test_tres_segundos_da_mesma_pessoa_destacam_solo(self):
+        modos = _classificar_modos_fala([0.25] * 91, 0.25, 0.75, fps=30)
+        self.assertEqual(modos[89], "SOLO_A")
+
+    def test_retomada_da_outra_pessoa_volta_ao_split(self):
+        modos = _classificar_modos_fala([0.25] * 91 + [0.75], 0.25, 0.75, fps=30)
+        self.assertEqual(modos[-1], "SPLIT")
+
+    def test_crop_solo_preserva_margem_do_rosto_na_borda(self):
+        x, _y, w, _h = _calcular_crop_seguro(
+            [(0.08, 0.38, 0.08)], 1920, 1080, 9 / 16
+        )
+        self.assertEqual(x, 0)
+        self.assertGreaterEqual(w, 608)
+
+    def test_crop_grupo_contem_as_duas_pessoas(self):
+        x, _y, w, _h = _calcular_crop_seguro(
+            [(0.30, 0.40, 0.08), (0.58, 0.42, 0.08)],
+            1920, 1080, 9 / 16,
+        )
+        self.assertLessEqual(x, int(0.30 * 1920))
+        self.assertGreaterEqual(x + w, int(0.58 * 1920))
+    def test_split_compoe_dois_paineis_com_crops_independentes(self):
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        frame[:, :320] = (0, 0, 220)
+        frame[:, 320:] = (220, 0, 0)
+        plano = {
+            "modo": "SPLIT", "xa": 0.25, "xb": 0.75,
+            "ya": 0.40, "yb": 0.40, "ta": 0.08, "tb": 0.08,
+        }
+        saida = _compor_frame_seguro(frame, plano, 360, 640)
+        self.assertEqual(saida.shape, (640, 360, 3))
+        self.assertGreater(saida[:320, :, 2].mean(), saida[:320, :, 0].mean())
+        self.assertGreater(saida[320:, :, 0].mean(), saida[320:, :, 2].mean())
     def test_crop_fica_dentro_do_frame(self):
         self.assertEqual(_calcular_x_crop(0.0, 1920, 608), 0)
         self.assertEqual(_calcular_x_crop(1.0, 1920, 608), 1312)
@@ -248,6 +318,36 @@ class TestCore(unittest.TestCase):
         self.assertAlmostEqual(grupo["lado_a"], 0.11, delta=0.03)
         self.assertAlmostEqual(grupo["lado_b"], 0.88, delta=0.03)
 
+    def test_plano_de_conversa_alternada_usa_split(self):
+        total = 120
+        cenas = [{
+            "frame_ini": 0, "frame_fim": total, "n_pessoas": 2,
+            "lado_a": 0.20, "lado_b": 0.80,
+            "lado_a_y": 0.40, "lado_b_y": 0.42,
+            "lado_a_tam": 0.08, "lado_b_tam": 0.08,
+        }]
+        plano = _gerar_plano(cenas, [0.20, 0.80] * 60, 30.0, total)
+        self.assertEqual({p["modo"] for p in plano}, {"SPLIT"})
+        self.assertTrue(all(p["xa"] == 0.20 and p["xb"] == 0.80 for p in plano))
+
+    def test_plano_destaca_solo_depois_de_tres_segundos(self):
+        total = 91
+        cenas = [{
+            "frame_ini": 0, "frame_fim": total, "n_pessoas": 2,
+            "lado_a": 0.20, "lado_b": 0.80,
+            "lado_a_y": 0.40, "lado_b_y": 0.42,
+            "lado_a_tam": 0.08, "lado_b_tam": 0.08,
+        }]
+        plano = _gerar_plano(cenas, [0.20] * total, 30.0, total)
+        self.assertEqual(plano[88]["modo"], "SPLIT")
+        self.assertEqual(plano[89]["modo"], "SOLO_A")
+
+    def test_crop_de_rosto_pequeno_mantem_plano_aberto(self):
+        _x, _y, w, h = _calcular_crop_seguro(
+            [(0.50, 0.38, 0.03)], 1920, 1080, 9 / 16
+        )
+        self.assertGreaterEqual(w, 516)
+        self.assertGreaterEqual(h, 918)
     def test_duas_pessoas_segue_quem_fala_nao_posicao_de_rosto(self):
         # Cena de 2+ pessoas ignora lado_a/lado_b (posição de rosto por
         # cena podia mirar num objeto decorativo — ver seção 10/11 do
@@ -262,8 +362,9 @@ class TestCore(unittest.TestCase):
         }]
         posicoes = [0.72] * total  # fala detectada numa posição real, fora de lado_a/lado_b
         plano = _gerar_plano(cenas, posicoes, fps, total)
-        xs = {round(p["xa"], 2) for p in plano}
-        self.assertEqual(xs, {0.72})
+        self.assertEqual(plano[0]["modo"], "SPLIT")
+        self.assertEqual(plano[89]["modo"], "SOLO_B")
+        self.assertTrue(all(p["xa"] in (0.10, 0.60) for p in plano))
 
     def test_duas_pessoas_mantem_ultimo_alvo_no_silencio(self):
         # Sem fala detectada num trecho, o crop não pula pro centro —
@@ -277,8 +378,9 @@ class TestCore(unittest.TestCase):
         }]
         posicoes = [0.72] * 150 + [None] * 150  # fala, depois silêncio
         plano = _gerar_plano(cenas, posicoes, fps, total)
-        xs = {round(p["xa"], 2) for p in plano}
-        self.assertEqual(xs, {0.72})
+        self.assertEqual(plano[149]["modo"], "SOLO_B")
+        self.assertEqual(plano[-1]["modo"], "SOLO_B")
+        self.assertEqual(plano[-1]["xa"], 0.60)
 
     def test_encoder_tem_codec_definido(self):
         argumentos = argumentos_encoder()

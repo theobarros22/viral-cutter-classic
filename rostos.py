@@ -449,6 +449,11 @@ def _agrupar_por_identidade(
                 "frames": {frame_idx},
             })
 
+    if not grupos and deteccoes:
+        LOGGER.warning(
+            "SFace não extraiu embeddings; usando agrupamento por posição."
+        )
+        return _agrupar_por_posicao(deteccoes)
     minimo_frames = max(2, min(4, int(np.ceil(max(1, total_amostras) * 0.10))))
     grupos = [g for g in grupos if len(g["frames"]) >= minimo_frames]
     grupos.sort(key=lambda g: float(np.mean([d["posicao_x"] for d in g["deteccoes"]])))
@@ -546,6 +551,21 @@ def salvar_previews(pessoas: list, pasta_temp: str) -> list:
     return pessoas
 
 
+def _escolher_fallback_humano(pessoas: list, ultimo=None) -> float:
+    """Escolhe uma posição humana real; nunca inventa o centro do quadro."""
+    if ultimo is not None:
+        return float(ultimo)
+    posicoes = [
+        float(p["posicao_x"])
+        for p in (pessoas or [])
+        if p.get("posicao_x") is not None
+    ]
+    if not posicoes:
+        raise RuntimeError(
+            "Nenhuma pessoa validada para enquadrar; revise a detecção antes de cortar."
+        )
+    return posicoes[0]
+
 def detectar_quem_fala_por_frame(
     caminho_video: str,
     pessoas: list,
@@ -583,9 +603,20 @@ def detectar_quem_fala_por_frame(
             if analisar_audio else [1.0] * total_frames
         )
 
+        # Se o detector facial falhar no primeiro trecho, não começa no
+        # centro arbitrário: usa a posição conhecida do participante quando
+        # há apenas uma pessoa identificada. Isso evita enquadrar mesa, TV
+        # ou bandeira enquanto o rosto está fora do primeiro frame amostrado.
+        posicoes_pessoas = [
+            float(p.get("posicao_x"))
+            for p in (pessoas or [])
+            if p.get("posicao_x") is not None
+        ]
+        fallback_x = _escolher_fallback_humano(pessoas, ultimo=None)
+
         resultado = [None] * total_frames
         frame_anterior = None
-        ultimo_falante_x = None
+        ultimo_falante_x = fallback_x
 
         intervalos = intervalos_frames or [(0, total_frames)]
         for inicio, fim in intervalos:
@@ -632,7 +663,7 @@ def detectar_quem_fala_por_frame(
         _fechar_detector(detector)
 
     # Interpola frames não analisados
-    resultado = _interpolar_falante(resultado, total_frames)
+    resultado = _interpolar_falante(resultado, total_frames, valor_inicial=fallback_x)
 
     _print_seguro(f"✅ Detecção de fala concluída!")
     return resultado
@@ -744,10 +775,10 @@ def _analisar_energia_audio(caminho_video: str, fps: float, total_frames: int) -
         return [0.5] * total_frames
 
 
-def _interpolar_falante(posicoes: list, total_frames: int) -> list:
+def _interpolar_falante(posicoes: list, total_frames: int, valor_inicial: float = 0.5) -> list:
     """Preenche frames sem detecção mantendo o último falante conhecido."""
     resultado = list(posicoes)
-    ultimo = 0.5
+    ultimo = float(valor_inicial)
 
     for i in range(total_frames):
         if resultado[i] is not None:
