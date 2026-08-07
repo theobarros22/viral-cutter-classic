@@ -23,6 +23,7 @@ from enquadramento import (
 )
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
+import pipeline
 from rostos import (
     NOME_MODELO_SFACE,
     URL_MODELO_SFACE,
@@ -41,6 +42,34 @@ from rostos import (
 import numpy as np
 import rostos
 class TestCore(unittest.TestCase):
+    def test_mesmo_projeto_nao_pode_processar_duas_vezes(self):
+        chave = os.path.join(tempfile.gettempdir(), "viral-cutter-concorrencia")
+        self.assertTrue(hasattr(pipeline, "_reservar_processamento"))
+        self.assertTrue(pipeline._reservar_processamento(chave))
+        try:
+            self.assertFalse(pipeline._reservar_processamento(chave))
+        finally:
+            pipeline._liberar_processamento(chave)
+        self.assertTrue(pipeline._reservar_processamento(chave))
+        pipeline._liberar_processamento(chave)
+
+    def test_etapa_rejeita_segundo_processamento_do_mesmo_projeto(self):
+        self.assertTrue(hasattr(pipeline, "_bloquear_processamento_duplicado"))
+        pasta = os.path.join(tempfile.gettempdir(), "viral-cutter-saida")
+        video = os.path.join(tempfile.gettempdir(), "Podcast Real.mp4")
+        chave = os.path.join(pasta, sanitizar_nome("Podcast Real"))
+
+        @pipeline._bloquear_processamento_duplicado
+        def executar(caminho_video, pasta_saida_base):
+            return "ok"
+
+        pipeline._reservar_processamento(chave)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "já está sendo processado"):
+                executar(video, pasta)
+        finally:
+            pipeline._liberar_processamento(chave)
+        self.assertEqual(executar(video, pasta), "ok")
     def test_modelo_sface_compativel_com_extracao_de_embeddings(self):
         self.assertEqual(NOME_MODELO_SFACE, "face_recognition_sface_2021dec.onnx")
         self.assertNotIn("int8", URL_MODELO_SFACE.lower())
@@ -641,6 +670,10 @@ class TestCore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+
 
 
 
