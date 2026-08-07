@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import tempfile
 import types
@@ -24,6 +24,8 @@ from enquadramento import (
 from ffmpeg_utils import argumentos_encoder
 from pipeline import _fundir_intervalos, _validar_segmentos, sanitizar_nome
 from rostos import (
+    NOME_MODELO_SFACE,
+    URL_MODELO_SFACE,
     _caminho_modelo_facial,
     _detectar_movimento_labial,
     _fechar_detector,
@@ -37,7 +39,36 @@ from rostos import (
     detectar_rostos_robusto,
 )
 import numpy as np
+import rostos
 class TestCore(unittest.TestCase):
+    def test_modelo_sface_compativel_com_extracao_de_embeddings(self):
+        self.assertEqual(NOME_MODELO_SFACE, "face_recognition_sface_2021dec.onnx")
+        self.assertNotIn("int8", URL_MODELO_SFACE.lower())
+
+    def test_rodadas_adaptativas_chegam_depois_de_introducao_longa(self):
+        rodadas = rostos._planejar_rodadas_amostragem(30 * 60 * 60, 30.0, 30, 5.0)
+        self.assertLess(max(rodadas[0]), 5 * 60 * 30)
+        self.assertGreater(max(max(r) for r in rodadas), 45 * 60 * 30)
+        self.assertEqual(len({f for r in rodadas for f in r}), sum(map(len, rodadas)))
+
+    def test_busca_estavel_exige_identidades_repetidas(self):
+        self.assertFalse(rostos._busca_esta_estavel([(), (), (), ()], 3))
+        self.assertTrue(rostos._busca_esta_estavel([("a", "b")] * 3, 3))
+        self.assertFalse(rostos._busca_esta_estavel([("a",), ("a",), ("a", "b"), ("a", "b")], 3))
+
+    def test_assinaturas_preservam_duas_pessoas_do_mesmo_lado(self):
+        pessoas = [{"id": 0, "lado": "esquerda"}, {"id": 1, "lado": "esquerda"}]
+        self.assertEqual(len(rostos._assinaturas_pessoas(pessoas)), 2)
+
+    def test_assinatura_de_identidade_ignora_troca_de_lado(self):
+        esquerda = [{"id": 0, "lado": "esquerda"}, {"id": 1, "lado": "direita"}]
+        centro = [{"id": 0, "lado": "centro"}, {"id": 1, "lado": "esquerda"}]
+        self.assertEqual(rostos._assinaturas_pessoas(esquerda), rostos._assinaturas_pessoas(centro))
+
+    def test_recorte_facial_vazio_nao_vira_preview(self):
+        deteccoes = [{"recorte_identidade": np.empty((0, 0, 3), np.uint8)}]
+        self.assertEqual(rostos._remover_identidades_sem_rosto_valido(deteccoes), [])
+
     def test_modelo_facial_tem_caminho_persistente(self):
         self.assertTrue(_caminho_modelo_facial().endswith("face_detector.tflite"))
 
@@ -64,14 +95,14 @@ class TestCore(unittest.TestCase):
         self.assertEqual(_fundir_intervalos([(10, 20), (15, 30), (40, 50)]), [(10, 30), (40, 50)])
 
     def test_zona_cabeca_mata_tv_e_estatua_mantem_pessoas(self):
-        # Cenário real do Papo Reto: pessoas em Y~0.43/0.57, TV em Y=0.13,
-        # estátua em Y=0.25, objetos na mesa em Y=0.79-0.90. Só as duas
+        # CenÃ¡rio real do Papo Reto: pessoas em Y~0.43/0.57, TV em Y=0.13,
+        # estÃ¡tua em Y=0.25, objetos na mesa em Y=0.79-0.90. SÃ³ as duas
         # pessoas devem sobreviver ao filtro de zona.
         rostos = [
             {"x": 0.10, "y": 0.43, "w": 0.05},  # pessoa esquerda
             {"x": 0.94, "y": 0.57, "w": 0.07},  # pessoa direita
             {"x": 0.51, "y": 0.13, "w": 0.10},  # TV (grande mas alta)
-            {"x": 0.33, "y": 0.25, "w": 0.07},  # estátua na estante
+            {"x": 0.33, "y": 0.25, "w": 0.07},  # estÃ¡tua na estante
             {"x": 0.50, "y": 0.90, "w": 0.02},  # objeto na mesa
         ]
         xs, ys, ws = _filtrar_rostos_na_zona_de_cabeca(rostos)
@@ -81,8 +112,8 @@ class TestCore(unittest.TestCase):
         self.assertAlmostEqual(grupo["lado_b"], 0.94, delta=0.02)
 
     def test_zona_cabeca_fallback_quando_ninguem_na_zona(self):
-        # Se nenhum rosto está na zona (enquadramento atípico), não descarta
-        # tudo — devolve todos como fallback.
+        # Se nenhum rosto estÃ¡ na zona (enquadramento atÃ­pico), nÃ£o descarta
+        # tudo â€” devolve todos como fallback.
         rostos = [
             {"x": 0.30, "y": 0.10, "w": 0.05},
             {"x": 0.70, "y": 0.12, "w": 0.05},
@@ -98,9 +129,9 @@ class TestCore(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _escolher_fallback_humano([], ultimo=None)
     def test_movimento_labial_ambiguo_retorna_none(self):
-        # Dois rostos com boca ocluída (mic de mesa): frames quase idênticos,
-        # sem movimento real. Antes caía sempre em rostos[0]["x"] — viés
-        # sistemático para o mesmo lado. Agora deve retornar None.
+        # Dois rostos com boca ocluÃ­da (mic de mesa): frames quase idÃªnticos,
+        # sem movimento real. Antes caÃ­a sempre em rostos[0]["x"] â€” viÃ©s
+        # sistemÃ¡tico para o mesmo lado. Agora deve retornar None.
         frame_anterior = np.full((200, 200, 3), 100, dtype=np.uint8)
         frame_atual = frame_anterior.copy()
         rostos = [
@@ -113,7 +144,7 @@ class TestCore(unittest.TestCase):
     def test_movimento_labial_detecta_lado_correto(self):
         frame_anterior = np.full((200, 200, 3), 100, dtype=np.uint8)
         frame_atual = frame_anterior.copy()
-        # Boca do rosto da direita (x=0.8) muda bastante — é quem fala.
+        # Boca do rosto da direita (x=0.8) muda bastante â€” Ã© quem fala.
         frame_atual[80:140, 140:180] = 220
         rostos = [
             {"x": 0.2, "y": 0.4, "w": 0.15, "h": 0.15},
@@ -124,12 +155,12 @@ class TestCore(unittest.TestCase):
 
     def test_filtro_de_pessoas_remove_tv_e_deteccao_esporadica(self):
         deteccoes = [
-            # Pessoa real: aparece em três amostras na zona humana.
+            # Pessoa real: aparece em trÃªs amostras na zona humana.
             *[
                 {"posicao_x": 0.16, "posicao_y": 0.46, "frame_idx": f, "fonte": "mediapipe"}
                 for f in (1, 2, 3)
             ],
-            # Rosto no telão: persistente, mas alto demais no quadro.
+            # Rosto no telÃ£o: persistente, mas alto demais no quadro.
             *[
                 {"posicao_x": 0.52, "posicao_y": 0.12, "frame_idx": f, "fonte": "mediapipe"}
                 for f in (1, 2, 3, 4, 5)
@@ -170,6 +201,22 @@ class TestCore(unittest.TestCase):
         pessoas = _agrupar_por_identidade(deteccoes, ReconhecedorFake(), total_amostras=6)
         self.assertEqual(len(pessoas), 2)
         self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [3, 3])
+    def test_identidade_passageira_nao_vira_participante(self):
+        class ReconhecedorFake:
+            def feature(self, imagem):
+                return np.array([[1.0, 0.0]]) if float(imagem.mean()) < 100 else np.array([[0.0, 1.0]])
+            def match(self, a, b, _metrica):
+                return float(np.dot(a.ravel(), b.ravel()))
+        deteccoes = []
+        for frame in range(15):
+            deteccoes.append({"posicao_x": 0.25, "posicao_y": 0.45, "frame_idx": frame,
+                              "recorte": np.full((40, 40, 3), 20, dtype=np.uint8)})
+        for frame in range(4):
+            deteccoes.append({"posicao_x": 0.75, "posicao_y": 0.45, "frame_idx": frame,
+                              "recorte": np.full((40, 40, 3), 200, dtype=np.uint8)})
+        pessoas = _agrupar_por_identidade(deteccoes, ReconhecedorFake(), total_amostras=100)
+        self.assertEqual(len(pessoas), 1)
+        self.assertEqual(pessoas[0]["n_aparicoes"], 15)
     def test_identidade_cai_para_posicao_quando_sface_nao_extrai_embeddings(self):
         class ReconhecedorSemEmbedding:
             def feature(self, _imagem):
@@ -200,7 +247,7 @@ class TestCore(unittest.TestCase):
 
     def test_refinamento_ajusta_para_limites_de_palavras(self):
         # Segmento com tempos "de frase" arredondados (10.0-20.0), mas as
-        # palavras reais vão de 10.34 a 19.62 — o corte deve seguir as palavras.
+        # palavras reais vÃ£o de 10.34 a 19.62 â€” o corte deve seguir as palavras.
         transcricao = {"segments": [{"words": [
             {"start": 10.34, "end": 10.80, "word": "ola"},
             {"start": 11.00, "end": 19.62, "word": "mundo"},
@@ -228,8 +275,8 @@ class TestCore(unittest.TestCase):
         self.assertGreaterEqual(refinados[0]["inicio"], 0.0)
 
     def test_ajuste_escolhe_silencio_mais_proximo_nao_o_primeiro(self):
-        # Dois silêncios na margem: meio em 9000ms (longe) e 10100ms (perto).
-        # O corte em 10000ms deve ir para o mais próximo (10100), não o
+        # Dois silÃªncios na margem: meio em 9000ms (longe) e 10100ms (perto).
+        # O corte em 10000ms deve ir para o mais prÃ³ximo (10100), nÃ£o o
         # primeiro da lista (9000).
         silencios = [(8800, 9200), (10000, 10200)]
         ajustados = ajustar_cortes_com_silencio(
@@ -242,7 +289,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(validar_hook(seg), (40.0, 42.5))
 
     def test_hook_no_comeco_do_clipe_e_rejeitado(self):
-        # Frase forte já abre o clipe — cold open seria repetição imediata
+        # Frase forte jÃ¡ abre o clipe â€” cold open seria repetiÃ§Ã£o imediata
         seg = {"inicio": 10.0, "fim": 70.0, "hook_inicio": 12.0, "hook_fim": 14.0}
         self.assertIsNone(validar_hook(seg))
 
@@ -311,7 +358,7 @@ class TestCore(unittest.TestCase):
 
     def test_rosto_esporadico_na_tv_nao_vira_lado(self):
         # Duas pessoas nas bordas aparecem em quase todas as amostras;
-        # um rosto na TV central aparece uma vez só — não pode virar lado B.
+        # um rosto na TV central aparece uma vez sÃ³ â€” nÃ£o pode virar lado B.
         xs = [0.10, 0.11, 0.10, 0.12, 0.53, 0.88, 0.87, 0.89, 0.88]
         grupo = _agrupar_posicoes_cena(xs)
         self.assertEqual(grupo["n_pessoas"], 2)
@@ -349,10 +396,10 @@ class TestCore(unittest.TestCase):
         self.assertGreaterEqual(w, 516)
         self.assertGreaterEqual(h, 918)
     def test_duas_pessoas_segue_quem_fala_nao_posicao_de_rosto(self):
-        # Cena de 2+ pessoas ignora lado_a/lado_b (posição de rosto por
-        # cena podia mirar num objeto decorativo — ver seção 10/11 do
-        # RELATORIO_COMPLETO_2026-07-03.md). O alvo do crop é a posição de
-        # QUEM FALA, mesmo que ela não bata com lado_a nem lado_b.
+        # Cena de 2+ pessoas ignora lado_a/lado_b (posiÃ§Ã£o de rosto por
+        # cena podia mirar num objeto decorativo â€” ver seÃ§Ã£o 10/11 do
+        # RELATORIO_COMPLETO_2026-07-03.md). O alvo do crop Ã© a posiÃ§Ã£o de
+        # QUEM FALA, mesmo que ela nÃ£o bata com lado_a nem lado_b.
         fps = 30.0
         total = 900  # 30s
         cenas = [{
@@ -360,15 +407,15 @@ class TestCore(unittest.TestCase):
             "lado_a": 0.10, "lado_b": 0.60,
             "lado_a_y": 0.40, "lado_b_y": 0.40,
         }]
-        posicoes = [0.72] * total  # fala detectada numa posição real, fora de lado_a/lado_b
+        posicoes = [0.72] * total  # fala detectada numa posiÃ§Ã£o real, fora de lado_a/lado_b
         plano = _gerar_plano(cenas, posicoes, fps, total)
         self.assertEqual(plano[0]["modo"], "SPLIT")
         self.assertEqual(plano[89]["modo"], "SOLO_B")
         self.assertTrue(all(p["xa"] in (0.10, 0.60) for p in plano))
 
     def test_duas_pessoas_mantem_ultimo_alvo_no_silencio(self):
-        # Sem fala detectada num trecho, o crop não pula pro centro —
-        # mantém o último alvo válido (evita corte nervoso em pausas).
+        # Sem fala detectada num trecho, o crop nÃ£o pula pro centro â€”
+        # mantÃ©m o Ãºltimo alvo vÃ¡lido (evita corte nervoso em pausas).
         fps = 30.0
         total = 300  # 10s
         cenas = [{
@@ -376,7 +423,7 @@ class TestCore(unittest.TestCase):
             "lado_a": 0.10, "lado_b": 0.60,
             "lado_a_y": 0.40, "lado_b_y": 0.40,
         }]
-        posicoes = [0.72] * 150 + [None] * 150  # fala, depois silêncio
+        posicoes = [0.72] * 150 + [None] * 150  # fala, depois silÃªncio
         plano = _gerar_plano(cenas, posicoes, fps, total)
         self.assertEqual(plano[149]["modo"], "SOLO_B")
         self.assertEqual(plano[-1]["modo"], "SOLO_B")
@@ -427,8 +474,8 @@ class TestCore(unittest.TestCase):
                 arquivo.write(b"incompleto")
             self.assertFalse(resultado_valido({"arquivo": caminho}))
 
-    # Resposta simulada da validação FFprobe (v2.3) para testes que usam
-    # arquivos falsos — o ffprobe real reprovaria os bytes de mentira e o
+    # Resposta simulada da validaÃ§Ã£o FFprobe (v2.3) para testes que usam
+    # arquivos falsos â€” o ffprobe real reprovaria os bytes de mentira e o
     # retry do pipeline dobraria as chamadas de enquadramento.
     _VALIDACAO_OK = {
         "valid": True, "errors": [], "warnings": [],
@@ -531,16 +578,16 @@ class TestCore(unittest.TestCase):
 
     def test_robusto_nao_cai_no_haar_se_mediapipe_acha_na_tentativa_3(self):
         # Bug real (Papo Reto, plano aberto): MediaPipe falhava no frame
-        # original, e o Haar embutido no detector "combinado" disparava já
-        # na tentativa 1 antes de tentar o zoom 2x/3x — o Haar então
-        # "achava" rosto numa estatueta do cenário. As 3 tentativas de
+        # original, e o Haar embutido no detector "combinado" disparava jÃ¡
+        # na tentativa 1 antes de tentar o zoom 2x/3x â€” o Haar entÃ£o
+        # "achava" rosto numa estatueta do cenÃ¡rio. As 3 tentativas de
         # MediaPipe devem esgotar ANTES de qualquer chamada ao Haar.
         detector = {"tipo": "combinado", "mediapipe": {"tipo": "novo"}, "haar": object()}
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
 
         # tentativa 1 (original) e 2 (2x) vazias; tentativa 3 varre as duas
-        # metades e só acha rosto na esquerda — mesmo assim não deve cair
-        # no Haar, já que a tentativa 3 inteira roda antes dessa decisão.
+        # metades e sÃ³ acha rosto na esquerda â€” mesmo assim nÃ£o deve cair
+        # no Haar, jÃ¡ que a tentativa 3 inteira roda antes dessa decisÃ£o.
         respostas = [[], [], [{"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.1}], []]
         with patch("rostos._detectar_rostos_frame", side_effect=respostas) as mock_mp, \
                 patch("rostos._detectar_rostos_haar") as mock_haar:
@@ -594,3 +641,9 @@ class TestCore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+
+
+

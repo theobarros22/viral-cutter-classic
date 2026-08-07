@@ -1,14 +1,14 @@
-"""
+﻿"""
 rostos.py
 ---------
-Detecta rostos no vídeo, extrai uma imagem de preview de cada pessoa
-e permite que o usuário escolha quem priorizar no enquadramento.
+Detecta rostos no vÃ­deo, extrai uma imagem de preview de cada pessoa
+e permite que o usuÃ¡rio escolha quem priorizar no enquadramento.
 
 Como funciona:
-1. Analisa frames do vídeo com MediaPipe
+1. Analisa frames do vÃ­deo com MediaPipe
 2. Agrupa rostos similares (mesma pessoa aparecendo em frames diferentes)
 3. Extrai a melhor foto de cada pessoa detectada
-4. Retorna lista de pessoas com preview e posição média na tela
+4. Retorna lista de pessoas com preview e posiÃ§Ã£o mÃ©dia na tela
 """
 
 import cv2
@@ -27,34 +27,34 @@ LOGGER = logging.getLogger("ViralCutter.rostos")
 
 class VideoIlegivelError(RuntimeError):
     """
-    O vídeo não pôde ser decodificado — nenhum quadro foi lido.
+    O vÃ­deo nÃ£o pÃ´de ser decodificado â€” nenhum quadro foi lido.
 
-    Quase sempre significa que o upload ainda não terminou (arquivos grandes
-    levam minutos) ou que o arquivo está corrompido/incompleto. É diferente de
-    "li o vídeo e não achei rosto nenhum" — esse caso continua retornando [].
+    Quase sempre significa que o upload ainda nÃ£o terminou (arquivos grandes
+    levam minutos) ou que o arquivo estÃ¡ corrompido/incompleto. Ã‰ diferente de
+    "li o vÃ­deo e nÃ£o achei rosto nenhum" â€” esse caso continua retornando [].
     """
 
 
 MSG_VIDEO_ILEGIVEL = (
-    "⏳ Não consegui ler nenhum quadro do vídeo. Isso quase sempre significa "
-    "que o upload ainda NÃO terminou (arquivos grandes, de vários GB, levam "
-    "minutos) ou que o arquivo está corrompido. Aguarde o upload chegar a 100% "
+    "â³ NÃ£o consegui ler nenhum quadro do vÃ­deo. Isso quase sempre significa "
+    "que o upload ainda NÃƒO terminou (arquivos grandes, de vÃ¡rios GB, levam "
+    "minutos) ou que o arquivo estÃ¡ corrompido. Aguarde o upload chegar a 100% "
     "e clique em DETECTAR PESSOAS novamente."
 )
 
-# Abaixo disso, a diferença de movimento entre os rostos é ruído de
-# compressão/iluminação, não fala real — comum quando um microfone de mesa
-# cobre a boca e a região analisada mal muda de um frame pro outro.
+# Abaixo disso, a diferenÃ§a de movimento entre os rostos Ã© ruÃ­do de
+# compressÃ£o/iluminaÃ§Ã£o, nÃ£o fala real â€” comum quando um microfone de mesa
+# cobre a boca e a regiÃ£o analisada mal muda de um frame pro outro.
 LIMIAR_MOVIMENTO_LABIAL = 4.0
-NOME_MODELO_SFACE = "face_recognition_sface_2021dec_int8bq.onnx"
+NOME_MODELO_SFACE = "face_recognition_sface_2021dec.onnx"
 URL_MODELO_SFACE = (
     "https://github.com/opencv/opencv_zoo/raw/refs/heads/main/"
-    "models/face_recognition_sface/face_recognition_sface_2021dec_int8bq.onnx"
+    "models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
 )
-# Os recortes vêm do MediaPipe (sem os cinco marcos usados pelo alinhamento
-# nativo do SFace). Em vídeo real, perfis da mesma pessoa ficam por volta de
+# Os recortes vÃªm do MediaPipe (sem os cinco marcos usados pelo alinhamento
+# nativo do SFace). Em vÃ­deo real, perfis da mesma pessoa ficam por volta de
 # 0.50; 0.55 separava a mesma pessoa em duas identidades. O recorte facial
-# justo reduz a influência do cenário e permite este limiar conservador.
+# justo reduz a influÃªncia do cenÃ¡rio e permite este limiar conservador.
 LIMIAR_IDENTIDADE_SFACE = 0.47
 
 
@@ -67,7 +67,7 @@ def _print_seguro(mensagem) -> None:
 
 
 def _caminho_recurso(nome: str) -> str:
-    """Localiza recursos tanto no código-fonte quanto no executável."""
+    """Localiza recursos tanto no cÃ³digo-fonte quanto no executÃ¡vel."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, nome)
 
@@ -84,11 +84,11 @@ def _caminho_modelo_facial() -> str:
 
 def _corrigir_mp4(caminho_video: str) -> str:
     """
-    Corrige o mp4 movendo o moov atom para o início.
+    Corrige o mp4 movendo o moov atom para o inÃ­cio.
     Resolve o erro 'moov atom not found' do OpenCV.
-    Retorna o caminho do arquivo corrigido (ou o original se não precisar).
+    Retorna o caminho do arquivo corrigido (ou o original se nÃ£o precisar).
     """
-    # A maioria dos arquivos abre normalmente. Remuxar sempre duplicava vídeos
+    # A maioria dos arquivos abre normalmente. Remuxar sempre duplicava vÃ­deos
     # enormes e atrasava a primeira etapa sem necessidade.
     cap = cv2.VideoCapture(caminho_video)
     abriu = cap.isOpened()
@@ -114,138 +114,136 @@ def _corrigir_mp4(caminho_video: str) -> str:
     return caminho_video  # usa original se falhar
 
 
+def _planejar_rodadas_amostragem(total_frames: int, fps: float,
+                                   max_amostras: int = 30,
+                                   limite_minutos: float = 5.0) -> list:
+    """Distribui pequenos lotes por toda a duração, sem repetir frames."""
+    total = max(1, int(total_frames))
+    fps = fps if fps and fps > 0 else 30.0
+    tamanho_faixa = max(1, int(max(1.0, limite_minutos) * 60 * fps))
+    lote = max(6, min(8, int(max_amostras // 4) or 6))
+    rodadas, usados = [], set()
+    inicio = 0
+    while inicio < total:
+        fim = min(total, inicio + tamanho_faixa)
+        alvos = []
+        for valor in np.linspace(inicio, max(inicio, fim - 1), lote, dtype=int):
+            frame = int(valor)
+            if frame not in usados:
+                usados.add(frame)
+                alvos.append(frame)
+        if alvos:
+            rodadas.append(alvos)
+        inicio = fim
+    return rodadas
+
+
+def _busca_esta_estavel(historico_assinaturas: list,
+                         rodadas_sem_novidade: int = 3) -> bool:
+    """Só encerra com identidades reais e várias rodadas sem novidade."""
+    quantidade = max(1, int(rodadas_sem_novidade))
+    if len(historico_assinaturas) < quantidade:
+        return False
+    ultimas = [tuple(item) for item in historico_assinaturas[-quantidade:]]
+    return bool(ultimas[0]) and all(item == ultimas[0] for item in ultimas[1:])
+
+
+def _assinaturas_pessoas(pessoas: list) -> tuple:
+    """Representa cada identidade separadamente, mesmo no mesmo lado."""
+    return tuple(int(p.get("id", i)) for i, p in enumerate(pessoas or []))
+
 def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                                limite_minutos: float = 5.0) -> list:
-    """
-    Detecta e agrupa as pessoas que aparecem no vídeo.
-
-    Analisa apenas os primeiros `limite_minutos` minutos — em podcasts,
-    todos os participantes normalmente já apareceram nos primeiros 5 min.
-    Muito mais rápido em vídeos longos.
-
-    Retorna lista de dicts:
-    [
-        {
-            "id": 0,
-            "nome": "Pessoa 1",
-            "posicao_x": 0.25,        # posição média X (0=esq, 1=dir)
-            "lado": "esquerda",        # "esquerda", "direita" ou "centro"
-            "preview_base64": "...",   # imagem do rosto em base64
-            "preview_path": "...",     # caminho do arquivo de preview
-            "n_aparicoes": 45,         # quantas vezes apareceu
-        }
-    ]
-    """
-    # Corrige o mp4 antes de abrir com OpenCV
+    """Detecta participantes em rodadas progressivas por toda a duração."""
     caminho_original = caminho_video
     caminho_video = _corrigir_mp4(caminho_video)
     detector = _inicializar_detector()
     if detector is None:
-        _print_seguro("⚠️ Detector não disponível.")
-        if caminho_video != caminho_original and os.path.exists(caminho_video):
-            os.remove(caminho_video)
+        _print_seguro("Detector não disponível.")
         return []
 
+    reconhecedor = _inicializar_reconhecedor_facial()
     cap = cv2.VideoCapture(caminho_video)
+    deteccoes = []
+    pessoas = []
+    frames_lidos = 0
+    amostras_analisadas = 0
+    historico = []
+    motivo_parada = "fim do vídeo"
     try:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        altura  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps     = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        altura = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        rodadas = _planejar_rodadas_amostragem(
+            total_frames, fps, max_amostras, limite_minutos
+        )
+        _print_seguro(
+            f"Detectando pessoas de forma adaptativa ({len(rodadas)} faixas possíveis)..."
+        )
 
-        # Limita a análise aos primeiros N minutos
-        frame_limite = int(limite_minutos * 60 * fps)
-        frames_analisar = min(total_frames, frame_limite)
-
-        # Vai diretamente aos frames de amostra. Antes o programa decodificava
-        # todos os frames intermediários, embora analisasse apenas algumas dezenas.
-        amostras_reais = min(max_amostras, frames_analisar)
-        alvos = np.linspace(0, max(0, frames_analisar - 1), amostras_reais, dtype=int)
-        _print_seguro(f"🔍 Detectando pessoas nos primeiros {limite_minutos:.0f} min ({amostras_reais} amostras)...")
-
-        # Guarda: lista de (posicao_x, frame_com_rosto_recortado)
-        # frames_lidos distingue "vídeo ilegível/incompleto" (0 quadros lidos)
-        # de "li o vídeo mas não há rosto" (quadros lidos, 0 detecções).
-        deteccoes = []
-        frames_lidos = 0
-        for frame_idx in alvos:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            frames_lidos += 1
-
-            rostos = detectar_rostos_robusto(frame, detector)
-            for rosto in rostos:
-                x_centro = rosto["x"] * largura
-                y_centro = rosto["y"] * altura
-                w_rosto  = rosto["w"] * largura
-                h_rosto  = rosto.get("h", rosto["w"]) * altura
-
-                margem = 0.5
-                x1 = max(0, int(x_centro - w_rosto * (0.5 + margem)))
-                y1 = max(0, int(y_centro - h_rosto * (0.5 + margem)))
-                x2 = min(largura, int(x_centro + w_rosto * (0.5 + margem)))
-                y2 = min(altura, int(y_centro + h_rosto * (0.5 + margem)))
-
-                recorte = frame[y1:y2, x1:x2]
-                if recorte.size > 0:
-                    rosto_x1 = max(0, int(x_centro - w_rosto * 0.55))
-                    rosto_y1 = max(0, int(y_centro - h_rosto * 0.55))
-                    rosto_x2 = min(largura, int(x_centro + w_rosto * 0.55))
-                    rosto_y2 = min(altura, int(y_centro + h_rosto * 0.55))
+        for numero, alvos in enumerate(rodadas, 1):
+            lidos_rodada = 0
+            for frame_idx in alvos:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                frames_lidos += 1
+                lidos_rodada += 1
+                for rosto in detectar_rostos_robusto(frame, detector):
+                    x_centro = rosto["x"] * largura
+                    y_centro = rosto["y"] * altura
+                    w_rosto = rosto["w"] * largura
+                    h_rosto = rosto.get("h", rosto["w"]) * altura
+                    margem = 0.5
+                    x1 = max(0, int(x_centro - w_rosto * (0.5 + margem)))
+                    y1 = max(0, int(y_centro - h_rosto * (0.5 + margem)))
+                    x2 = min(largura, int(x_centro + w_rosto * (0.5 + margem)))
+                    y2 = min(altura, int(y_centro + h_rosto * (0.5 + margem)))
+                    rx1 = max(0, int(x_centro - w_rosto * 0.55))
+                    ry1 = max(0, int(y_centro - h_rosto * 0.55))
+                    rx2 = min(largura, int(x_centro + w_rosto * 0.55))
+                    ry2 = min(altura, int(y_centro + h_rosto * 0.55))
+                    recorte = frame[y1:y2, x1:x2]
+                    recorte_identidade = frame[ry1:ry2, rx1:rx2]
+                    if recorte.size == 0 or recorte_identidade.size == 0:
+                        continue
                     deteccoes.append({
                         "posicao_x": rosto["x"],
                         "posicao_y": rosto["y"],
                         "fonte": rosto.get("fonte", "mediapipe"),
                         "confianca": rosto.get("confianca", 0.0),
                         "recorte": recorte,
-                        "recorte_identidade": frame[rosto_y1:rosto_y2, rosto_x1:rosto_x2],
+                        "recorte_identidade": recorte_identidade,
                         "frame_idx": int(frame_idx),
                     })
 
-        # Alguns MP4/MOV grandes não permitem busca aleatória confiável pelo OpenCV.
-        # Se nenhuma amostra funcionou, faz uma varredura curta e sequencial.
-        if not deteccoes:
-            _print_seguro("   🔄 Busca aleatória sem resultado; tentando varredura sequencial...")
-            cap.release()
-            cap = cv2.VideoCapture(caminho_video)
-            limite_sequencial = min(total_frames, int(fps * 120))
-            passo_sequencial = max(1, int(fps * 2))
-            frame_idx = 0
-            while cap.isOpened() and frame_idx < limite_sequencial:
-                ret = cap.grab()
-                if not ret:
-                    break
-                if frame_idx % passo_sequencial == 0:
-                    ret, frame = cap.retrieve()
-                    if ret:
-                        frames_lidos += 1
-                        for rosto in detectar_rostos_robusto(frame, detector):
-                            x_centro = rosto["x"] * largura
-                            y_centro = rosto["y"] * altura
-                            w_rosto = rosto["w"] * largura
-                            h_rosto = rosto.get("h", rosto["w"]) * altura
-                            x1 = max(0, int(x_centro - w_rosto))
-                            y1 = max(0, int(y_centro - h_rosto))
-                            x2 = min(largura, int(x_centro + w_rosto))
-                            y2 = min(altura, int(y_centro + h_rosto))
-                            recorte = frame[y1:y2, x1:x2]
-                            if recorte.size > 0:
-                                rosto_x1 = max(0, int(x_centro - w_rosto * 0.55))
-                                rosto_y1 = max(0, int(y_centro - h_rosto * 0.55))
-                                rosto_x2 = min(largura, int(x_centro + w_rosto * 0.55))
-                                rosto_y2 = min(altura, int(y_centro + h_rosto * 0.55))
-                                deteccoes.append({
-                                    "posicao_x": rosto["x"],
-                                    "posicao_y": rosto["y"],
-                                    "fonte": rosto.get("fonte", "mediapipe"),
-                                    "confianca": rosto.get("confianca", 0.0),
-                                    "recorte": recorte,
-                                    "recorte_identidade": frame[rosto_y1:rosto_y2, rosto_x1:rosto_x2],
-                                    "frame_idx": frame_idx,
-                                })
-                frame_idx += 1
+            amostras_analisadas += lidos_rodada
+            filtradas = _filtrar_candidatos_pessoas(
+                deteccoes,
+                amostras_analisadas,
+                exigir_persistencia_por_lado=(reconhecedor is None),
+            )
+            filtradas = _remover_identidades_sem_rosto_valido(filtradas)
+            if filtradas:
+                pessoas = (
+                    _agrupar_por_identidade(filtradas, reconhecedor, amostras_analisadas)
+                    if reconhecedor is not None
+                    else _agrupar_por_posicao(filtradas)
+                )
+            else:
+                pessoas = []
+            historico.append(_assinaturas_pessoas(pessoas))
+            segundo_ini = int(alvos[0] / fps) if alvos else 0
+            segundo_fim = int(alvos[-1] / fps) if alvos else 0
+            _print_seguro(
+                f"Rodada {numero}: {segundo_ini // 60}-{segundo_fim // 60} min, "
+                f"{lidos_rodada} amostras, {len(pessoas)} identidade(s) confirmada(s)."
+            )
+            if _busca_esta_estavel(historico, 3):
+                motivo_parada = "identidades estáveis por três rodadas"
+                break
     finally:
         cap.release()
         _fechar_detector(detector)
@@ -255,48 +253,44 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
             except OSError:
                 pass
 
-    # Nenhum quadro decodificado → vídeo incompleto (upload em andamento) ou
-    # corrompido. Sinaliza com clareza em vez de reportar "nenhuma pessoa".
     if frames_lidos == 0:
         _print_seguro(MSG_VIDEO_ILEGIVEL)
         raise VideoIlegivelError(MSG_VIDEO_ILEGIVEL)
-
-    reconhecedor = _inicializar_reconhecedor_facial()
-    deteccoes = _filtrar_candidatos_pessoas(
-        deteccoes,
-        amostras_reais,
-        exigir_persistencia_por_lado=(reconhecedor is None),
-    )
-    if not deteccoes:
-        _print_seguro("⚠️ Nenhum rosto detectado.")
+    _print_seguro(f"Busca encerrada: {motivo_parada}.")
+    if not pessoas:
+        _print_seguro("Nenhum rosto persistente detectado.")
         return []
-
-    # Com SFace, a mesma pessoa continua sendo uma identidade mesmo quando
-    # cortes de câmera a movem da esquerda para o centro ou para a direita.
-    pessoas = (
-        _agrupar_por_identidade(deteccoes, reconhecedor, amostras_reais)
-        if reconhecedor is not None
-        else _agrupar_por_posicao(deteccoes)
-    )
-
-    _print_seguro(f"✅ {len(pessoas)} pessoa(s) identificada(s) no vídeo.")
+    _print_seguro(f"{len(pessoas)} pessoa(s) identificada(s) no vídeo.")
     return pessoas
 
+def _remover_identidades_sem_rosto_valido(deteccoes: list) -> list:
+    """Mantém somente recortes faciais reais, não quadros vazios ou minúsculos."""
+    validas = []
+    for det in deteccoes or []:
+        recorte = det.get("recorte_identidade")
+        if not isinstance(recorte, np.ndarray) or recorte.size == 0:
+            continue
+        if recorte.ndim < 2 or recorte.shape[0] < 20 or recorte.shape[1] < 20:
+            continue
+        proporcao = recorte.shape[1] / max(1.0, float(recorte.shape[0]))
+        if 0.45 <= proporcao <= 1.8:
+            validas.append(det)
+    return validas
 
 def _filtrar_candidatos_pessoas(
     deteccoes: list,
     total_amostras: int,
     exigir_persistencia_por_lado: bool = True,
 ) -> list:
-    """Remove objetos do cenário antes de criar a lista de participantes.
+    """Remove objetos do cenÃ¡rio antes de criar a lista de participantes.
 
     Uma pessoa real precisa aparecer em mais de um frame e, em podcasts,
     normalmente tem o centro do rosto entre 28% e 78% da altura. TV, bustos
     em estante e objetos sobre a mesa costumam ficar fora dessa faixa.
 
-    Se a composição for atípica, detecções confirmadas pelo MediaPipe ainda
-    são aceitas; o Haar, mais sujeito a falsos positivos, nunca é usado fora
-    da zona humana sem confirmação do MediaPipe.
+    Se a composiÃ§Ã£o for atÃ­pica, detecÃ§Ãµes confirmadas pelo MediaPipe ainda
+    sÃ£o aceitas; o Haar, mais sujeito a falsos positivos, nunca Ã© usado fora
+    da zona humana sem confirmaÃ§Ã£o do MediaPipe.
     """
     if not deteccoes:
         return []
@@ -343,15 +337,15 @@ def _inicializar_reconhecedor_facial():
         return None
 
     caminho = _caminho_modelo_reconhecimento()
-    if not os.path.isfile(caminho) or os.path.getsize(caminho) < 1_000_000:
+    if not os.path.isfile(caminho) or os.path.getsize(caminho) < 30_000_000:
         try:
             import urllib.request
-            _print_seguro("   Baixando modelo de reconhecimento facial (10 MB)...")
+            _print_seguro("   Baixando modelo de reconhecimento facial (37 MB)...")
             temporario = caminho + ".download"
             urllib.request.urlretrieve(URL_MODELO_SFACE, temporario)
             os.replace(temporario, caminho)
         except Exception as erro:
-            LOGGER.warning("SFace indisponível; usando agrupamento por posição: %s", erro)
+            LOGGER.warning("SFace indisponÃ­vel; usando agrupamento por posiÃ§Ã£o: %s", erro)
             try:
                 if os.path.exists(caminho + ".download"):
                     os.remove(caminho + ".download")
@@ -362,7 +356,7 @@ def _inicializar_reconhecedor_facial():
     try:
         return cv2.FaceRecognizerSF.create(caminho, "")
     except Exception as erro:
-        LOGGER.warning("Falha ao carregar SFace; usando agrupamento por posição: %s", erro)
+        LOGGER.warning("Falha ao carregar SFace; usando agrupamento por posiÃ§Ã£o: %s", erro)
         return None
 
 
@@ -379,7 +373,7 @@ def _extrair_embedding_facial(recorte, reconhecedor):
 
 
 def _escolher_melhor_preview(deteccoes: list):
-    """Escolhe um rosto nítido sem favorecer caixas gigantes ou vazias."""
+    """Escolhe um rosto nÃ­tido sem favorecer caixas gigantes ou vazias."""
     areas = np.array([
         d.get("recorte_identidade", d["recorte"]).shape[0]
         * d.get("recorte_identidade", d["recorte"]).shape[1]
@@ -392,7 +386,7 @@ def _escolher_melhor_preview(deteccoes: list):
         if rosto.size == 0:
             continue
         # Caixas multiescala aberrantes costumam ser muito maiores que as
-        # demais e conter cenário preto em vez do participante.
+        # demais e conter cenÃ¡rio preto em vez do participante.
         if area_mediana and not (area_mediana * 0.45 <= area <= area_mediana * 2.20):
             continue
         cinza = cv2.cvtColor(rosto, cv2.COLOR_BGR2GRAY)
@@ -413,7 +407,7 @@ def _agrupar_por_identidade(
     total_amostras: int,
     limiar: float = LIMIAR_IDENTIDADE_SFACE,
 ) -> list:
-    """Agrupa rostos pelo embedding SFace, independentemente da câmera/lado."""
+    """Agrupa rostos pelo embedding SFace, independentemente da cÃ¢mera/lado."""
     grupos = []
     for det in sorted(deteccoes, key=lambda d: int(d.get("frame_idx", 0))):
         recorte_identidade = det.get("recorte_identidade", det["recorte"])
@@ -425,7 +419,7 @@ def _agrupar_por_identidade(
         melhor_score = -1.0
         frame_idx = int(det.get("frame_idx", -1))
         for grupo in grupos:
-            # Duas faces no mesmo frame são necessariamente pessoas distintas.
+            # Duas faces no mesmo frame sÃ£o necessariamente pessoas distintas.
             if frame_idx in grupo["frames"]:
                 continue
             score = max(
@@ -439,7 +433,7 @@ def _agrupar_por_identidade(
         if melhor_grupo is not None and melhor_score >= limiar:
             melhor_grupo["deteccoes"].append(det)
             melhor_grupo["frames"].add(frame_idx)
-            # Limita memória sem perder variedade de poses.
+            # Limita memÃ³ria sem perder variedade de poses.
             if len(melhor_grupo["embeddings"]) < 8:
                 melhor_grupo["embeddings"].append(embedding)
         else:
@@ -451,10 +445,10 @@ def _agrupar_por_identidade(
 
     if not grupos and deteccoes:
         LOGGER.warning(
-            "SFace não extraiu embeddings; usando agrupamento por posição."
+            "SFace nÃ£o extraiu embeddings; usando agrupamento por posiÃ§Ã£o."
         )
         return _agrupar_por_posicao(deteccoes)
-    minimo_frames = max(2, min(4, int(np.ceil(max(1, total_amostras) * 0.10))))
+    minimo_frames = max(2, int(np.ceil(max(1, total_amostras) * 0.12)))
     grupos = [g for g in grupos if len(g["frames"]) >= minimo_frames]
     grupos.sort(key=lambda g: float(np.mean([d["posicao_x"] for d in g["deteccoes"]])))
 
@@ -462,7 +456,7 @@ def _agrupar_por_identidade(
     for grupo in grupos:
         detecs = grupo["deteccoes"]
         melhor = _escolher_melhor_preview(detecs)
-        preview = cv2.resize(melhor["recorte"], (200, 200), interpolation=cv2.INTER_LANCZOS4)
+        preview = cv2.resize(melhor.get("recorte_identidade", melhor["recorte"]), (200, 200), interpolation=cv2.INTER_LANCZOS4)
         _, buffer = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 85])
         pos_x_media = float(np.mean([d["posicao_x"] for d in detecs]))
         lado = "esquerda" if pos_x_media < 0.4 else ("direita" if pos_x_media > 0.6 else "centro")
@@ -480,19 +474,19 @@ def _agrupar_por_identidade(
 
 def _agrupar_por_posicao(deteccoes: list, limiar_agrupamento: float = 0.25) -> list:
     """
-    Agrupa detecções de rostos por posição X para identificar pessoas distintas.
+    Agrupa detecÃ§Ãµes de rostos por posiÃ§Ã£o X para identificar pessoas distintas.
 
-    Estratégia simples e eficaz para podcasts:
-    - Rostos no lado esquerdo (x < 0.4) → Pessoa A
-    - Rostos no lado direito (x > 0.6) → Pessoa B
-    - Rostos no centro (0.4-0.6) → pode ser plano geral ou terceira pessoa
+    EstratÃ©gia simples e eficaz para podcasts:
+    - Rostos no lado esquerdo (x < 0.4) â†’ Pessoa A
+    - Rostos no lado direito (x > 0.6) â†’ Pessoa B
+    - Rostos no centro (0.4-0.6) â†’ pode ser plano geral ou terceira pessoa
     """
     grupos = {}
 
     for det in deteccoes:
         x = det["posicao_x"]
 
-        # Define o grupo baseado na posição X
+        # Define o grupo baseado na posiÃ§Ã£o X
         if x < 0.4:
             chave = "esquerda"
         elif x > 0.6:
@@ -508,7 +502,7 @@ def _agrupar_por_posicao(deteccoes: list, limiar_agrupamento: float = 0.25) -> l
     ordem = {"esquerda": 0, "direita": 1, "centro": 2}
 
     for lado, detecs in sorted(grupos.items(), key=lambda x: ordem.get(x[0], 99)):
-        # Pega o melhor recorte (maior área)
+        # Pega o melhor recorte (maior Ã¡rea)
         melhor = max(detecs, key=lambda d: d["recorte"].shape[0] * d["recorte"].shape[1])
         recorte = melhor["recorte"]
 
@@ -519,7 +513,7 @@ def _agrupar_por_posicao(deteccoes: list, limiar_agrupamento: float = 0.25) -> l
         _, buffer = cv2.imencode('.jpg', preview, [cv2.IMWRITE_JPEG_QUALITY, 85])
         preview_b64 = base64.b64encode(buffer).decode('utf-8')
 
-        # Posição média X desse grupo
+        # PosiÃ§Ã£o mÃ©dia X desse grupo
         pos_x_media = np.mean([d["posicao_x"] for d in detecs])
 
         pessoas.append({
@@ -537,7 +531,7 @@ def _agrupar_por_posicao(deteccoes: list, limiar_agrupamento: float = 0.25) -> l
 
 def salvar_previews(pessoas: list, pasta_temp: str) -> list:
     """
-    Salva os previews das pessoas em arquivos temporários.
+    Salva os previews das pessoas em arquivos temporÃ¡rios.
     Retorna a lista de pessoas com o campo 'preview_path' preenchido.
     """
     os.makedirs(pasta_temp, exist_ok=True)
@@ -552,7 +546,7 @@ def salvar_previews(pessoas: list, pasta_temp: str) -> list:
 
 
 def _escolher_fallback_humano(pessoas: list, ultimo=None) -> float:
-    """Escolhe uma posição humana real; nunca inventa o centro do quadro."""
+    """Escolhe uma posiÃ§Ã£o humana real; nunca inventa o centro do quadro."""
     if ultimo is not None:
         return float(ultimo)
     posicoes = [
@@ -562,7 +556,7 @@ def _escolher_fallback_humano(pessoas: list, ultimo=None) -> float:
     ]
     if not posicoes:
         raise RuntimeError(
-            "Nenhuma pessoa validada para enquadrar; revise a detecção antes de cortar."
+            "Nenhuma pessoa validada para enquadrar; revise a detecÃ§Ã£o antes de cortar."
         )
     return posicoes[0]
 
@@ -574,14 +568,14 @@ def detectar_quem_fala_por_frame(
     analisar_audio: bool = True,
 ) -> list:
     """
-    Detecta quem está falando em cada frame do vídeo.
+    Detecta quem estÃ¡ falando em cada frame do vÃ­deo.
 
     Combina:
-    - Posição dos rostos detectados
-    - Análise de movimento labial (variação na região da boca)
-    - Energia do áudio por janela de tempo
+    - PosiÃ§Ã£o dos rostos detectados
+    - AnÃ¡lise de movimento labial (variaÃ§Ã£o na regiÃ£o da boca)
+    - Energia do Ã¡udio por janela de tempo
 
-    Retorna lista com posição_x do falante para cada frame.
+    Retorna lista com posiÃ§Ã£o_x do falante para cada frame.
     Frames sem fala detectada retornam None.
     """
     detector = _inicializar_detector()
@@ -596,17 +590,17 @@ def detectar_quem_fala_por_frame(
         largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         altura = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        _print_seguro(f"🎤 Detectando quem fala em {total_frames} frames...")
+        _print_seguro(f"ðŸŽ¤ Detectando quem fala em {total_frames} frames...")
 
         energia_audio = (
             _analisar_energia_audio(caminho_video, fps, total_frames)
             if analisar_audio else [1.0] * total_frames
         )
 
-        # Se o detector facial falhar no primeiro trecho, não começa no
-        # centro arbitrário: usa a posição conhecida do participante quando
-        # há apenas uma pessoa identificada. Isso evita enquadrar mesa, TV
-        # ou bandeira enquanto o rosto está fora do primeiro frame amostrado.
+        # Se o detector facial falhar no primeiro trecho, nÃ£o comeÃ§a no
+        # centro arbitrÃ¡rio: usa a posiÃ§Ã£o conhecida do participante quando
+        # hÃ¡ apenas uma pessoa identificada. Isso evita enquadrar mesa, TV
+        # ou bandeira enquanto o rosto estÃ¡ fora do primeiro frame amostrado.
         posicoes_pessoas = [
             float(p.get("posicao_x"))
             for p in (pessoas or [])
@@ -662,10 +656,10 @@ def detectar_quem_fala_por_frame(
         cap.release()
         _fechar_detector(detector)
 
-    # Interpola frames não analisados
+    # Interpola frames nÃ£o analisados
     resultado = _interpolar_falante(resultado, total_frames, valor_inicial=fallback_x)
 
-    _print_seguro(f"✅ Detecção de fala concluída!")
+    _print_seguro(f"âœ… DetecÃ§Ã£o de fala concluÃ­da!")
     return resultado
 
 
@@ -674,13 +668,13 @@ def _detectar_movimento_labial(
     largura: int, altura: int
 ) -> float:
     """
-    Detecta qual rosto tem mais movimento na região da boca.
-    Usa diferença entre frames consecutivos na parte inferior do rosto.
-    Retorna a posição X do rosto com mais movimento (quem está falando).
+    Detecta qual rosto tem mais movimento na regiÃ£o da boca.
+    Usa diferenÃ§a entre frames consecutivos na parte inferior do rosto.
+    Retorna a posiÃ§Ã£o X do rosto com mais movimento (quem estÃ¡ falando).
 
-    Se nenhum rosto atinge LIMIAR_MOVIMENTO_LABIAL, o resultado é ambíguo
-    (ex.: microfone cobrindo a boca) — retorna None em vez de cair sempre
-    no primeiro rosto da lista, o que enviesaria sistematicamente a detecção
+    Se nenhum rosto atinge LIMIAR_MOVIMENTO_LABIAL, o resultado Ã© ambÃ­guo
+    (ex.: microfone cobrindo a boca) â€” retorna None em vez de cair sempre
+    no primeiro rosto da lista, o que enviesaria sistematicamente a detecÃ§Ã£o
     de fala para o mesmo lado.
     """
     if frame_anterior is None or not rostos:
@@ -690,13 +684,13 @@ def _detectar_movimento_labial(
     falante_x = None
 
     for rosto in rostos:
-        # Região da boca: 60-90% da altura do rosto
+        # RegiÃ£o da boca: 60-90% da altura do rosto
         x_c = rosto["x"] * largura
         y_c = rosto["y"] * altura
         w   = rosto["w"] * largura
         h   = rosto.get("h", rosto["w"]) * altura
 
-        # Recorte da região da boca
+        # Recorte da regiÃ£o da boca
         x1 = max(0, int(x_c - w * 0.3))
         y1 = max(0, int(y_c + h * 0.1))   # abaixo do centro do rosto
         x2 = min(largura, int(x_c + w * 0.3))
@@ -711,7 +705,7 @@ def _detectar_movimento_labial(
         if boca_atual.shape != boca_anterior.shape or boca_atual.size == 0:
             continue
 
-        # Calcula diferença entre frames (movimento)
+        # Calcula diferenÃ§a entre frames (movimento)
         diff = cv2.absdiff(
             cv2.cvtColor(boca_atual, cv2.COLOR_BGR2GRAY),
             cv2.cvtColor(boca_anterior, cv2.COLOR_BGR2GRAY)
@@ -729,7 +723,7 @@ def _detectar_movimento_labial(
 
 
 def _analisar_energia_audio(caminho_video: str, fps: float, total_frames: int) -> list:
-    """Analisa energia do áudio e retorna valor por frame."""
+    """Analisa energia do Ã¡udio e retorna valor por frame."""
     import subprocess
     import wave
 
@@ -751,8 +745,8 @@ def _analisar_energia_audio(caminho_video: str, fps: float, total_frames: int) -
         with wave.open(audio_temp, 'rb') as wf:
             sr = wf.getframerate()
             samples_por_frame = max(1, int(sr / fps))
-            # Lê uma pequena janela por vez. Antes carregava todo o áudio na
-            # memória, chegando facilmente a centenas de MB em podcasts longos.
+            # LÃª uma pequena janela por vez. Antes carregava todo o Ã¡udio na
+            # memÃ³ria, chegando facilmente a centenas de MB em podcasts longos.
             for _ in range(total_frames):
                 raw = wf.readframes(samples_por_frame)
                 if not raw:
@@ -776,7 +770,7 @@ def _analisar_energia_audio(caminho_video: str, fps: float, total_frames: int) -
 
 
 def _interpolar_falante(posicoes: list, total_frames: int, valor_inicial: float = 0.5) -> list:
-    """Preenche frames sem detecção mantendo o último falante conhecido."""
+    """Preenche frames sem detecÃ§Ã£o mantendo o Ãºltimo falante conhecido."""
     resultado = list(posicoes)
     ultimo = float(valor_inicial)
 
@@ -789,7 +783,7 @@ def _interpolar_falante(posicoes: list, total_frames: int, valor_inicial: float 
     return resultado
 
 
-# ── MediaPipe helpers ─────────────────────────────────────────────────────────
+# â”€â”€ MediaPipe helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _inicializar_detector():
     mediapipe_detector = None
@@ -809,8 +803,8 @@ def _inicializar_detector():
         base_options = mp_python.BaseOptions(model_asset_path=modelo_path)
         options = mp_vision.FaceDetectorOptions(
             base_options=base_options,
-            # 0.35 em vez de 0.5 — rostos pequenos em plano aberto têm
-            # confiança mais baixa; 0.5 deixava muita gente sem detectar
+            # 0.35 em vez de 0.5 â€” rostos pequenos em plano aberto tÃªm
+            # confianÃ§a mais baixa; 0.5 deixava muita gente sem detectar
             min_detection_confidence=0.35
         )
         obj = mp_vision.FaceDetector.create_from_options(options)
@@ -820,7 +814,7 @@ def _inicializar_detector():
         erros.append(f"MediaPipe Tasks: {erro}")
         try:
             import mediapipe as mp
-            # model_selection=1 = full-range (rostos longe da câmera)
+            # model_selection=1 = full-range (rostos longe da cÃ¢mera)
             obj = mp.solutions.face_detection.FaceDetection(
                 model_selection=1, min_detection_confidence=0.35
             )
@@ -830,7 +824,7 @@ def _inicializar_detector():
             erros.append(f"MediaPipe Solutions: {erro_antigo}")
 
     # Fallback independente do MediaPipe. Os classificadores fazem parte do
-    # OpenCV e funcionam também dentro do executável.
+    # OpenCV e funcionam tambÃ©m dentro do executÃ¡vel.
     haar = None
     try:
         caminho_haar = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
@@ -841,9 +835,9 @@ def _inicializar_detector():
         erros.append(f"OpenCV Haar: {erro}")
 
     if mediapipe_detector is None and haar is None:
-        mensagem = " | ".join(erros) or "nenhum detector disponível"
+        mensagem = " | ".join(erros) or "nenhum detector disponÃ­vel"
         LOGGER.error("Falha ao inicializar detectores: %s", mensagem)
-        _print_seguro(f"   ⚠️ Falha ao carregar detector facial: {mensagem}")
+        _print_seguro(f"   âš ï¸ Falha ao carregar detector facial: {mensagem}")
         return None
 
     if erros:
@@ -872,21 +866,21 @@ def _fechar_detector(detector):
 
 def detectar_rostos_robusto(frame, detector) -> list:
     """
-    Detecção robusta para PLANO ABERTO (rostos pequenos).
+    DetecÃ§Ã£o robusta para PLANO ABERTO (rostos pequenos).
 
-    O modelo do MediaPipe é de curto alcance — em plano aberto de podcast
-    os rostos ficam pequenos demais e ele falha. Esta função tenta 3 vezes
-    usando SÓ o MediaPipe (nunca o Haar aqui — ver motivo abaixo):
+    O modelo do MediaPipe Ã© de curto alcance â€” em plano aberto de podcast
+    os rostos ficam pequenos demais e ele falha. Esta funÃ§Ã£o tenta 3 vezes
+    usando SÃ“ o MediaPipe (nunca o Haar aqui â€” ver motivo abaixo):
 
-    1. Frame original (rápido, funciona em close)
-    2. Frame ampliado 2x (rostos pequenos ficam detectáveis)
+    1. Frame original (rÃ¡pido, funciona em close)
+    2. Frame ampliado 2x (rostos pequenos ficam detectÃ¡veis)
     3. Metades esquerda/direita ampliadas 3x em largura E altura
        (pessoas coladas nas bordas, longe do centro)
 
-    O Haar cascade (OpenCV) só é usado se o MediaPipe não estiver disponível.
-    Quando o MediaPipe funciona mas não acha ninguém após todas as escalas,
-    o resultado correto é vazio. O Haar confunde padrões do cenário (parede,
-    TV, estatueta) com rostos e já gerou enquadramentos mirando em decoração.
+    O Haar cascade (OpenCV) sÃ³ Ã© usado se o MediaPipe nÃ£o estiver disponÃ­vel.
+    Quando o MediaPipe funciona mas nÃ£o acha ninguÃ©m apÃ³s todas as escalas,
+    o resultado correto Ã© vazio. O Haar confunde padrÃµes do cenÃ¡rio (parede,
+    TV, estatueta) com rostos e jÃ¡ gerou enquadramentos mirando em decoraÃ§Ã£o.
 
     Retorna lista no mesmo formato de _detectar_rostos_frame
     (coordenadas normalizadas 0-1 relativas ao frame ORIGINAL).
@@ -896,12 +890,12 @@ def detectar_rostos_robusto(frame, detector) -> list:
     h, w = frame.shape[:2]
     resultado_mp = []
 
-    # Tentativa 1 — frame original, MediaPipe puro. Não retorna cedo: uma
-    # pessoa próxima pode aparecer aqui enquanto outra, menor, só surge no zoom.
+    # Tentativa 1 â€” frame original, MediaPipe puro. NÃ£o retorna cedo: uma
+    # pessoa prÃ³xima pode aparecer aqui enquanto outra, menor, sÃ³ surge no zoom.
     if mp_detector:
         resultado_mp.extend(_detectar_rostos_frame(frame, mp_detector))
 
-    # Tentativa 2 — amplia o frame 2x (coordenadas normalizadas não mudam)
+    # Tentativa 2 â€” amplia o frame 2x (coordenadas normalizadas nÃ£o mudam)
     if mp_detector:
         try:
             ampliado = cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
@@ -909,9 +903,9 @@ def detectar_rostos_robusto(frame, detector) -> list:
         except Exception:
             pass
 
-        # Tentativa 3 — metades esquerda e direita, ampliadas 3x em largura
-        # E altura (zoom só na largura não aumenta rostos pequenos o
-        # suficiente; testado empiricamente em plano aberto multicâmera).
+        # Tentativa 3 â€” metades esquerda e direita, ampliadas 3x em largura
+        # E altura (zoom sÃ³ na largura nÃ£o aumenta rostos pequenos o
+        # suficiente; testado empiricamente em plano aberto multicÃ¢mera).
         try:
             resultado = []
             metades = [
@@ -941,12 +935,12 @@ def detectar_rostos_robusto(frame, detector) -> list:
     if resultado_mp:
         return resultado_mp
 
-    # MediaPipe respondeu normalmente, mas não encontrou rosto em nenhuma
-    # escala. Não substitui esse resultado por um palpite ruidoso do Haar.
+    # MediaPipe respondeu normalmente, mas nÃ£o encontrou rosto em nenhuma
+    # escala. NÃ£o substitui esse resultado por um palpite ruidoso do Haar.
     if mp_detector is not None:
         return []
 
-    # Último recurso apenas quando o MediaPipe nem sequer pôde ser carregado.
+    # Ãšltimo recurso apenas quando o MediaPipe nem sequer pÃ´de ser carregado.
     haar = detector.get("haar") if isinstance(detector, dict) else None
     return _detectar_rostos_haar(frame, haar) if haar is not None else []
 
@@ -1011,12 +1005,12 @@ def _detectar_rostos_frame(frame, detector) -> list:
                         "confianca": float(det.score[0]) if det.score else 0.0,
                     })
     except Exception as erro:
-        LOGGER.warning("Erro durante detecção facial: %s", erro)
+        LOGGER.warning("Erro durante detecÃ§Ã£o facial: %s", erro)
     return _limpar_deteccoes(rostos)
 
 
 def _detectar_rostos_haar(frame, classificador) -> list:
-    """Fallback OpenCV para quando MediaPipe falhar ou não achar rostos."""
+    """Fallback OpenCV para quando MediaPipe falhar ou nÃ£o achar rostos."""
     if classificador is None:
         return []
     try:
@@ -1047,7 +1041,7 @@ def _detectar_rostos_haar(frame, classificador) -> list:
 
 
 def _limpar_deteccoes(rostos: list) -> list:
-    """Remove caixas inválidas e duplicadas produzidas pelos fallbacks."""
+    """Remove caixas invÃ¡lidas e duplicadas produzidas pelos fallbacks."""
     resultado = []
     ordenados = sorted(
         rostos,
@@ -1072,7 +1066,7 @@ def _limpar_deteccoes(rostos: list) -> list:
 
 
 def _deteccoes_sobrepostas(a: dict, b: dict) -> bool:
-    """Considera duplicadas caixas com grande sobreposição ou centro próximo."""
+    """Considera duplicadas caixas com grande sobreposiÃ§Ã£o ou centro prÃ³ximo."""
     ax1, ay1 = a["x"] - a["w"] / 2, a["y"] - a["h"] / 2
     ax2, ay2 = a["x"] + a["w"] / 2, a["y"] + a["h"] / 2
     bx1, by1 = b["x"] - b["w"] / 2, b["y"] - b["h"] / 2
@@ -1080,13 +1074,20 @@ def _deteccoes_sobrepostas(a: dict, b: dict) -> bool:
     inter = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
     uniao = a["w"] * a["h"] + b["w"] * b["h"] - inter
     iou = inter / uniao if uniao > 0 else 0.0
-    # Em detecção multi-escala, a mesma face pode voltar como uma caixa
+    # Em detecÃ§Ã£o multi-escala, a mesma face pode voltar como uma caixa
     # grande no frame inteiro e outra menor na metade ampliada. Usa a maior
-    # caixa como referência; pessoas realmente distintas têm centros muito
-    # mais afastados em relação ao próprio tamanho facial.
+    # caixa como referÃªncia; pessoas realmente distintas tÃªm centros muito
+    # mais afastados em relaÃ§Ã£o ao prÃ³prio tamanho facial.
     centro_proximo = (
         abs(a["x"] - b["x"]) < max(0.04, max(a["w"], b["w"]) * 0.50)
         and abs(a["y"] - b["y"]) < max(0.04, max(a["h"], b["h"]) * 0.40)
     )
     return iou >= 0.20 or centro_proximo
-# fim do arquivo — deteccao robusta v2
+# fim do arquivo â€” deteccao robusta v2
+
+
+
+
+
+
+
