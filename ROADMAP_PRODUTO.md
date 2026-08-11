@@ -48,6 +48,26 @@ integrados e testados no pipeline `interface.py -> pipeline.py -> enquadramento.
 5. Criar testes de integracao com videos curtos de referencia.
 6. Remover definitivamente o pipeline legado apos comparacao funcional.
 
+7. Criar painel de andamento visivel durante todo o fluxo, sem interromper a
+   producao atual, mostrando:
+   - etapa em execucao e etapas ja concluidas;
+   - percentual por etapa e percentual geral;
+   - quantidade de clipes processados e total previsto;
+   - tempo decorrido e estimativa de tempo restante;
+   - estados aguardando, processando, concluido, pausado e erro;
+   - aviso claro de quando o usuario pode avancar para a proxima etapa.
+
+Registro de teste da Classic 2.3.2 (11/08/2026): o processamento acontece, mas
+o usuario ainda nao consegue acompanhar com clareza se cada processo terminou
+ou esta proximo de terminar. Implementar somente depois dos testes atuais, sem
+alterar o programa enquanto estiver em producao.
+
+Avaliacao de qualidade da Classic 2.3.2 (11/08/2026): os cortes, a disposicao
+dos cortes e o enquadramento atendem aproximadamente 90% da necessidade real.
+O resultado esta proximo de 10/10, foi considerado muito bom e confirma que o
+projeto esta seguindo por um caminho bastante promissor. Preservar essa
+qualidade como baseline nas proximas calibracoes e na futura versao Beta.
+
 Meta: nenhuma falha exige recomecar o processamento completo.
 
 ## Prioridade 2 - qualidade de enquadramento
