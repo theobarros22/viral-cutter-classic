@@ -41,3 +41,22 @@ GREEN:
 - A aba Legendas Animadas mantém rolagem interna própria porque não foi redesenhada neste escopo.
 - O aviso do Gradio sobre Dataframe(col_count=...) é preexistente e não afeta esta entrega.
 - A validação visual final deve ser feita no executável empacotado em 1366x768, pois pequenos detalhes do shell WebView/navegador podem variar conforme escala do Windows.
+## Correção de acessibilidade das ferramentas após teste real
+
+O teste real em 1920x1080 revelou que o shell começava abaixo do topo previsto pelo cálculo original e terminava além do viewport, tornando ferramentas inferiores inacessíveis.
+
+TDD RED:
+
+- novo teste de regressão executado isoladamente;
+- 1 falha esperada, detectando a regra incorreta height: calc(100dvh - 116px).
+
+GREEN:
+
+- shell limitado por height e max-height em calc(100dvh - 196px);
+- área mínima útil de 360 px preservada para telas menores;
+- workspace e inspector com rolagem vertical explícita, gutter estável e overscroll contido;
+- barras estilizadas e visíveis em navegadores Chromium;
+- CTA permanece fora da região rolável do inspector;
+- 5/5 testes estruturais aprovados;
+- suíte completa: 84/84 testes aprovados em 16,935 s;
+- py_compile e git diff --check aprovados.

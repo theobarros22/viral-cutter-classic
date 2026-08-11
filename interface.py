@@ -306,17 +306,37 @@ body { margin: 0 !important; }
 .classic-shell {
     display: grid !important;
     grid-template-columns: minmax(170px, .72fr) minmax(520px, 3.1fr) minmax(290px, 1.35fr) !important;
-    gap: 10px !important; height: calc(100dvh - 116px); min-height: 0; padding: 10px !important;
-    overflow: hidden !important;
+    gap: 10px !important;
+    height: calc(100dvh - 196px); max-height: calc(100dvh - 196px);
+    min-height: 360px; padding: 10px !important; overflow: hidden !important;
 }
 .classic-shell > .workflow-panel, .classic-shell > .workspace-panel, .classic-shell > .inspector-panel {
     min-width: 0 !important; min-height: 0 !important; margin: 0 !important;
     border: 1px solid var(--vc-border); border-radius: 12px; background: rgba(15,19,24,.72);
 }
 .workflow-panel { overflow: hidden !important; padding: 12px !important; }
-.workspace-panel { overflow-y: auto !important; overflow-x: hidden !important; padding: 0 12px 14px !important; }
+.workspace-panel {
+    overflow-y: auto !important; overflow-x: hidden !important; padding: 0 12px 14px !important;
+    scrollbar-gutter: stable; overscroll-behavior: contain; scrollbar-width: auto;
+    scrollbar-color: var(--vc-border-strong) var(--vc-surface);
+}
 .inspector-panel { display: flex !important; flex-direction: column !important; overflow: hidden !important; padding: 0 !important; }
-.inspector-scroll { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 0 12px 12px !important; }
+.inspector-scroll {
+    flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 0 12px 12px !important;
+    scrollbar-gutter: stable; overscroll-behavior: contain; scrollbar-width: auto;
+    scrollbar-color: var(--vc-border-strong) var(--vc-surface);
+}
+.workspace-panel::-webkit-scrollbar, .inspector-scroll::-webkit-scrollbar { width: 12px; }
+.workspace-panel::-webkit-scrollbar-track, .inspector-scroll::-webkit-scrollbar-track {
+    background: var(--vc-surface); border-radius: 999px;
+}
+.workspace-panel::-webkit-scrollbar-thumb, .inspector-scroll::-webkit-scrollbar-thumb {
+    min-height: 44px; border: 3px solid var(--vc-surface); border-radius: 999px;
+    background: var(--vc-border-strong);
+}
+.workspace-panel::-webkit-scrollbar-thumb:hover, .inspector-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--vc-muted);
+}
 .process-actions {
     flex: 0 0 auto !important; margin: 0 !important; padding: 10px !important;
     border-top: 1px solid var(--vc-border); background: #0b0e12; z-index: 3;

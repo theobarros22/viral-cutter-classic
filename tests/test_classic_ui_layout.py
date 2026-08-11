@@ -27,6 +27,15 @@ class ClassicDesktopLayoutTests(unittest.TestCase):
         self.assertIn("overflow: hidden", self.source)
         self.assertIn("@media (max-width: 1200px)", self.source)
 
+    def test_shell_fits_remaining_viewport_and_panels_scroll_visibly(self):
+        self.assertNotIn("height: calc(100dvh - 116px)", self.source)
+        self.assertIn("height: calc(100dvh - 196px)", self.source)
+        self.assertIn("max-height: calc(100dvh - 196px)", self.source)
+        self.assertGreaterEqual(self.source.count("scrollbar-gutter: stable"), 2)
+        self.assertGreaterEqual(self.source.count("overscroll-behavior: contain"), 2)
+        self.assertIn(".workspace-panel::-webkit-scrollbar", self.source)
+        self.assertIn(".inspector-scroll::-webkit-scrollbar", self.source)
+
     def test_existing_tabs_and_processing_callbacks_remain(self):
         self.assertIn('gr.Tab("Corte Viral", id="tab_corte")', self.source)
         self.assertIn('gr.Tab("Legendas Animadas", id="tab_legendas")', self.source)
