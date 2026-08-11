@@ -73,6 +73,12 @@ Cada trabalho possui identificador, estado, etapa, progresso, timestamps, cancel
 
 Resultados reutilizáveis, como transcrição, análise de pessoas e cenas, permanecem associados ao checkpoint do vídeo. A implementação só reutiliza dados cuja assinatura de entrada e versão do algoritmo coincidam.
 
+O checkpoint é um manifesto JSON versionado e gravado atomicamente (arquivo temporário seguido de substituição). Ele é a fonte de verdade da retomada; logs são evidência de diagnóstico, não são interpretados para reconstruir estado. O manifesto guarda identificador do trabalho, assinatura da entrada, configurações, etapa atual, itens concluídos, artefatos, timestamps, erro e um dos estados `em_andamento`, `interrompido` ou `concluido`.
+
+Na abertura, trabalhos `em_andamento` sem processo proprietário vivo são classificados como `interrompido` e apresentados na interface com a ação **Continuar de onde parou**. Antes de reutilizar uma etapa ou clipe, o programa valida existência, assinatura e integridade do artefato com FFprobe quando aplicável. Artefato ausente, incompatível ou corrompido invalida somente a unidade correspondente e ela é refeita; unidades válidas permanecem preservadas.
+
+A persistência ocorre nas fronteiras idempotentes: após download confirmado, transcrição válida, análise visual válida e cada clipe exportado e validado. Operações parciais escrevem em nome temporário e só são promovidas ao nome definitivo depois da validação. O programa nunca marca uma etapa como concluída antes de seu artefato estar durável.
+
 ### 4. Observabilidade
 
 Haverá dois tipos de log:
@@ -152,6 +158,7 @@ Quando a validação falhar, o sistema tenta uma única recomposição mais aber
 9. Comparar vídeos reais de referência antes/depois e exigir aprovação visual do usuário.
 10. Testar o pacote em uma pasta limpa, sem depender do repositório ou de Python global.
 11. Reiniciar o Windows ou simular sessão limpa e validar o atalho, abertura, processamento e retomada.
+12. Simular interrupção após cada fronteira persistida, corromper um único artefato e confirmar que a retomada preserva os válidos e refaz somente o inválido.
 
 ## Empacotamento
 

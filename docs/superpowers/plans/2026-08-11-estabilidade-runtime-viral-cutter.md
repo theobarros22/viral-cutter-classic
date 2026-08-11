@@ -4,7 +4,7 @@
 
 **Goal:** Executar o Viral Cutter de forma repetível em Python 3.11, manter a interface ativa quando tarefas falharem e registrar toda queda com contexto suficiente.
 
-**Architecture:** `runtime.py` continua responsável por ambiente, logs, instância e porta. Um novo `launcher.py` realiza bootstrap e health check; `interface.py` expõe a criação/execução do app sem esconder exceções. Erros de trabalho são capturados na fronteira da interface e não encerram o processo Gradio.
+**Architecture:** `runtime.py` continua responsável por ambiente, logs, instância e porta. Um novo `launcher.py` realiza bootstrap e health check; `interface.py` expõe a criação/execução do app sem esconder exceções. `checkpoint.py` mantém um manifesto atômico e versionado para retomada idempotente. Erros de trabalho são capturados na fronteira da interface e não encerram o processo Gradio.
 
 **Tech Stack:** Python 3.11, Gradio, FastAPI/Uvicorn, PowerShell, `unittest`.
 
@@ -15,6 +15,7 @@
 - Porta ocupada por processo desconhecido nunca é encerrada automaticamente.
 - Toda falha fatal grava stack trace em UTF-8.
 - O mesmo projeto não executa duas vezes simultaneamente.
+- Logs servem para diagnóstico; somente o checkpoint estruturado pode governar a retomada.
 - Não alterar seleção editorial ou enquadramento nesta fase.
 
 ---
@@ -270,7 +271,70 @@ git add enquadramento.py checkpoint.py tests/test_visual_analysis_cache.py
 git commit -m "perf: reuse persisted visual analysis"
 ```
 
-### Task 7: Ambiente Python 3.11 reproduzível
+### Task 7: Retomada durável e idempotente de trabalhos interrompidos
+
+**Files:**
+- Modify: `checkpoint.py`
+- Modify: `pipeline.py`
+- Modify: `interface.py`
+- Create: `tests/test_resume_checkpoint.py`
+
+**Interfaces:**
+- Produces: `salvar_manifesto_atomico(caminho: Path, manifesto: dict) -> None`
+- Produces: `descobrir_trabalhos_interrompidos() -> list[dict]`
+- Produces: `validar_artefato_retomada(artefato: dict) -> tuple[bool, str]`
+- Modifies: `etapa3_processar(..., checkpoint=None, retomar=False)`
+
+- [ ] **Step 1: Write failing tests for atomic persistence and stale-work discovery**
+
+Create literal manifests for `em_andamento`, `interrompido` and `concluido`. Assert that a simulated write failure preserves the last valid JSON, that an orphaned `em_andamento` becomes discoverable as `interrompido`, and that completed work is not offered for resumption.
+
+- [ ] **Step 2: Run and verify the expected failures**
+
+Run: `python -m unittest tests.test_resume_checkpoint.ResumeManifestTests -v`
+
+Expected: failures because atomic manifest persistence and discovery do not exist yet.
+
+- [ ] **Step 3: Implement the minimal versioned manifest**
+
+Use the existing checkpoint location and standard-library JSON/path primitives. Write to a sibling temporary file, flush and `os.fsync`, then `os.replace`. Store schema version, job ID, input signature, settings signature, owner PID, state, current stage, completed units, artifact metadata, timestamps and serialized error. Never infer resumable state by parsing log text.
+
+- [ ] **Step 4: Write failing tests for selective artifact reuse**
+
+Build a job with three exported clips: two valid media files and one deliberately truncated file. Assert that resume schedules only the corrupt clip. Add a changed-input-signature case that invalidates all derived units and a changed-settings case that invalidates only affected downstream units.
+
+- [ ] **Step 5: Run and verify the expected failures**
+
+Run: `python -m unittest tests.test_resume_checkpoint.ResumeArtifactTests -v`
+
+Expected: failures because integrity and signature validation are not yet connected to scheduling.
+
+- [ ] **Step 6: Implement validation and idempotent stage boundaries**
+
+Validate existence, size and stored signature; use the existing FFprobe helper for media integrity. Persist only after download, transcription, visual analysis or clip export has produced and validated its durable artifact. Partial output keeps a temporary name and is never recorded as complete. On resume, preserve valid units and recompute only missing, incompatible or corrupt units.
+
+- [ ] **Step 7: Write failing interface test for the resume offer**
+
+Assert that startup state lists interrupted jobs with input name, last confirmed stage, timestamp and the action `Continuar de onde parou`. Choosing it must call the pipeline with the selected checkpoint and `retomar=True`; dismissing it must not delete the checkpoint.
+
+- [ ] **Step 8: Implement the minimal recovery UI and error transition**
+
+When the interface starts, call `descobrir_trabalhos_interrompidos`. A job recorded as `em_andamento` is stale only when its owner PID is absent or does not match the recorded process identity. A controlled failure persists `interrompido` plus its error before returning control to Gradio. Successful completion persists `concluido`.
+
+- [ ] **Step 9: Run resume and regression tests**
+
+Run: `python -m unittest tests.test_resume_checkpoint tests.test_pipeline_progress tests.test_interface_errors tests.test_visual_analysis_cache tests.test_core -v`
+
+Expected: all pass, including simulated interruption after every persisted boundary.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add checkpoint.py pipeline.py interface.py tests/test_resume_checkpoint.py
+git commit -m "feat: resume interrupted jobs from durable checkpoints"
+```
+
+### Task 8: Ambiente Python 3.11 reproduzível
 
 **Files:**
 - Modify: `requirements-lock.txt`
@@ -312,7 +376,7 @@ git add requirements-lock.txt requirements-cuda.txt PREPARAR_AMBIENTE.bat prepar
 git commit -m "build: reproduce Python 3.11 environment"
 ```
 
-### Task 8: Runtime regression gate
+### Task 9: Runtime regression gate
 
 **Files:**
 - Create: `docs/validation/runtime-estavel.md`
