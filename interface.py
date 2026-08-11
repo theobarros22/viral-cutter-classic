@@ -279,9 +279,64 @@ body { overflow-x: hidden; }
 input[type=checkbox] { accent-color: var(--vc-accent) !important; }
 .gr-slider input[type=range] { accent-color: var(--vc-accent) !important; }
 .helper-note { margin: 18px 0 0; color: var(--vc-subtle); font-size: .78rem; line-height: 1.55; text-align: center; }
+/* Classic 2.3.2: desktop workspace constrained to the viewport. */
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body { margin: 0 !important; }
+.gradio-container {
+    width: 100% !important; height: 100dvh !important; max-width: none !important;
+    margin: 0 !important; padding: 0 12px 10px !important; overflow: hidden !important;
+}
+.classic-topbar {
+    height: 50px; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--vc-border);
+    background: rgba(10,13,17,.96); color: var(--vc-text);
+}
+.classic-brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.classic-brand strong { color: var(--vc-accent); font-size: 1rem; }
+.classic-brand span, .classic-status { color: var(--vc-muted); font-size: .75rem; white-space: nowrap; }
+.classic-status { display: inline-flex; align-items: center; gap: 7px; }
+.classic-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--vc-accent); }
+.gradio-container .tabs {
+    height: calc(100dvh - 60px) !important; min-height: 0 !important;
+    display: flex !important; flex-direction: column !important; border-radius: 12px !important;
+}
+.gradio-container .tab-container { flex: 0 0 44px; padding: 4px 8px !important; }
+.gradio-container .tab-container button { min-height: 34px !important; padding: 0 14px !important; }
+.gradio-container .tabitem { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }
+.classic-shell {
+    display: grid !important;
+    grid-template-columns: minmax(170px, .72fr) minmax(520px, 3.1fr) minmax(290px, 1.35fr) !important;
+    gap: 10px !important; height: calc(100dvh - 116px); min-height: 0; padding: 10px !important;
+    overflow: hidden !important;
+}
+.classic-shell > .workflow-panel, .classic-shell > .workspace-panel, .classic-shell > .inspector-panel {
+    min-width: 0 !important; min-height: 0 !important; margin: 0 !important;
+    border: 1px solid var(--vc-border); border-radius: 12px; background: rgba(15,19,24,.72);
+}
+.workflow-panel { overflow: hidden !important; padding: 12px !important; }
+.workspace-panel { overflow-y: auto !important; overflow-x: hidden !important; padding: 0 12px 14px !important; }
+.inspector-panel { display: flex !important; flex-direction: column !important; overflow: hidden !important; padding: 0 !important; }
+.inspector-scroll { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 0 12px 12px !important; }
+.process-actions {
+    flex: 0 0 auto !important; margin: 0 !important; padding: 10px !important;
+    border-top: 1px solid var(--vc-border); background: #0b0e12; z-index: 3;
+}
+.workflow-title { margin: 2px 0 14px; color: var(--vc-muted); font-size: .68rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.workflow-step { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: center; padding: 8px 0; color: var(--vc-muted); font-size: .76rem; border-bottom: 1px solid rgba(57,67,80,.45); }
+.workflow-step b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: rgba(223,255,63,.09); color: var(--vc-accent); font-size: .66rem; }
+.classic-shell .sec { margin: 16px 0 10px; font-size: .72rem; }
+.classic-shell .output-log textarea { min-height: 92px !important; max-height: 150px !important; overflow-y: auto !important; }
+.classic-shell .btn-processar button { min-height: 48px !important; }
+
+@media (max-width: 1200px) {
+    .classic-shell { grid-template-columns: 92px minmax(340px, 1fr) minmax(240px, 300px) !important; gap: 8px !important; }
+    .workflow-panel { padding: 8px !important; }
+    .workflow-title { font-size: .6rem; }
+    .workflow-step { grid-template-columns: 22px 1fr; gap: 5px; font-size: .66rem; }
+}
 
 @media (max-width: 760px) {
-    .gradio-container { padding: 14px 12px 48px !important; }
+    .gradio-container { padding: 0 8px 8px !important; }
     .gradio-container .main, .gradio-container .wrap, .gradio-container .contain { min-width: 0 !important; }
     .app-header { grid-template-columns: 1fr; gap: 22px; padding: 24px 20px; border-radius: 16px; }
     .app-header h1 { font-size: clamp(2.25rem, 14vw, 3.35rem); }
@@ -846,17 +901,12 @@ def criar_interface():
     with gr.Blocks(title="Viral Cutter v2") as app:
 
         gr.HTML("""
-        <div class="app-header">
-            <div class="brand-lockup">
-                <p class="brand-kicker">Viral Cutter Studio</p>
-                <h1>Transforme conversas em <span>clipes que prendem.</span></h1>
-                <p class="hero-copy">Detecte participantes, encontre os melhores momentos e exporte cortes verticais com enquadramento e legendas inteligentes.</p>
+        <div class="classic-topbar">
+            <div class="classic-brand">
+                <strong>Viral Cutter Classic</strong>
+                <span>2.3.2</span>
             </div>
-            <div class="hero-meta" aria-label="Recursos do aplicativo">
-                <span class="status-pill">Processamento local</span>
-                <span class="status-pill">Retomada automática</span>
-                <span class="status-pill">Privacidade preservada</span>
-            </div>
+            <span class="classic-status">Processamento local</span>
         </div>
         """)
 
@@ -866,159 +916,150 @@ def criar_interface():
             # TAB 1 — CORTE VIRAL
             # ══════════════════════════════════════════════════════════════
             with gr.Tab("Corte Viral", id="tab_corte"):
+                with gr.Row(elem_classes="classic-shell"):
+                    with gr.Column(scale=1, min_width=112, elem_classes="workflow-panel"):
+                        gr.HTML("""
+                        <nav aria-label="Etapas do fluxo">
+                            <p class="workflow-title">Fluxo de produção</p>
+                            <div class="workflow-step"><b>01</b><span>Importar vídeo</span></div>
+                            <div class="workflow-step"><b>02</b><span>Detectar pessoas</span></div>
+                            <div class="workflow-step"><b>03</b><span>Analisar conteúdo</span></div>
+                            <div class="workflow-step"><b>04</b><span>Configurar export</span></div>
+                            <div class="workflow-step"><b>05</b><span>Processar cortes</span></div>
+                            <div class="workflow-step"><b>06</b><span>Revisar resultado</span></div>
+                        </nav>
+                        """)
 
-                gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
-                arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
+                    with gr.Column(scale=4, min_width=470, elem_classes="workspace-panel"):
+                        gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
+                        arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
+                        gr.HTML('<p style="font-size:11px;color:var(--vc-muted);text-align:center;margin:5px 0;">— ou —</p>')
+                        with gr.Row():
+                            url_video = gr.Textbox(
+                                label="Link do vídeo (YouTube etc.)",
+                                placeholder="https://www.youtube.com/watch?v=...",
+                                scale=4,
+                            )
+                            btn_baixar = gr.Button("⬇️ BAIXAR", scale=1)
+                        gr.Markdown("*Baixe apenas vídeos seus ou com direito de uso. Requer yt-dlp instalado.*")
+                        with gr.Row(elem_classes="btn-detectar"):
+                            btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
+                        log_deteccao = gr.Textbox(label="", interactive=False, lines=3, elem_classes="output-log")
 
-                gr.HTML('<p style="font-family:Space Mono,monospace;font-size:11px;color:var(--vc-muted);text-align:center;margin:8px 0;">— ou —</p>')
-                with gr.Row():
-                    url_video = gr.Textbox(
-                        label="Link do vídeo (YouTube etc.)",
-                        placeholder="https://www.youtube.com/watch?v=...",
-                        scale=4,
-                    )
-                    btn_baixar = gr.Button("⬇️ BAIXAR", scale=1)
-                gr.Markdown(
-                    "*Baixe apenas vídeos seus ou com direito de uso. Requer: "
-                    "`pip install yt-dlp`*",
-                )
+                        with gr.Group(visible=False) as painel_rostos:
+                            gr.HTML('<p class="sec">02 — Escolha Quem Priorizar</p>')
+                            gr.Markdown("*Selecione as pessoas que devem ser priorizadas no enquadramento.*")
+                            galeria_rostos = gr.Gallery(
+                                label="Pessoas detectadas", show_label=False,
+                                columns=4, height=180, object_fit="cover",
+                            )
+                            pessoas_opcoes = gr.CheckboxGroup(
+                                choices=[], value=[], label="✅ Marque quem priorizar:",
+                            )
 
-                with gr.Row(elem_classes="btn-detectar"):
-                    btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
+                        gr.HTML('<p class="sec">03 — Transcrição & Análise</p>')
+                        with gr.Row():
+                            idioma = gr.Dropdown(choices=list(IDIOMAS.keys()), value="Português", label="Idioma")
+                            modelo = gr.Dropdown(
+                                choices=list(MODELOS_WHISPER.keys()),
+                                value="small  — Rápido na GPU (recomendado)",
+                                label="Modelo Whisper",
+                            )
+                            nicho = gr.Dropdown(choices=list(NICHOS.keys()), value="Podcast", label="Nicho")
+                        modo_offline = gr.Checkbox(
+                            label="Modo offline — sem API (não consome créditos)",
+                            value=MODO_OFFLINE_PADRAO,
+                            info="Ativado automaticamente quando a chave da API não está configurada.",
+                        )
+                        producao_automatica = gr.Checkbox(
+                            label="🚀 Produção automática — processar direto após a análise",
+                            value=False,
+                            info="Ao terminar a análise, inicia o processamento com as opções do inspector.",
+                        )
+                        with gr.Row():
+                            duracao_min = gr.Slider(minimum=15, maximum=120, value=30, step=5, label="Duração mínima (s)")
+                            duracao_max = gr.Slider(minimum=30, maximum=180, value=90, step=5, label="Duração máxima (s)")
+                        with gr.Row(elem_classes="btn-analisar"):
+                            btn_analisar = gr.Button("TRANSCREVER E ANALISAR", scale=1)
+                        log_analise = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
 
-                log_deteccao = gr.Textbox(label="", interactive=False, lines=4, elem_classes="output-log")
+                        gr.HTML('<p class="sec">05 — Resultado & Preview</p>')
+                        with gr.Row():
+                            btn_abrir_saida = gr.Button("Abrir pasta de saída", scale=1)
+                            btn_abrir_logs = gr.Button("Abrir pasta de logs", scale=1)
+                        log_processo = gr.Textbox(label="Log", interactive=False, lines=5, elem_classes="output-log")
+                        relatorio_out = gr.Textbox(label="Relatório", interactive=False, lines=5, elem_classes="output-log")
+                        preview_gallery = gr.Gallery(label="", show_label=False, columns=3, height=250, object_fit="contain")
+                        with gr.Row(visible=False, elem_classes="btn-detectar") as painel_enviar_legenda:
+                            opcoes_clipes = gr.Dropdown(
+                                choices=[], label="Escolha um clipe gerado para legendar:", scale=3,
+                            )
+                            btn_enviar_legenda = gr.Button("ENVIAR CLIPE PARA LEGENDAS", scale=2)
 
-                with gr.Group(visible=False) as painel_rostos:
-                    gr.HTML('<p class="sec">02 — Escolha Quem Priorizar</p>')
-                    gr.Markdown("*Selecione as pessoas que devem ser priorizadas no enquadramento.*")
+                    with gr.Column(scale=2, min_width=270, elem_classes="inspector-panel"):
+                        with gr.Group(elem_classes="inspector-scroll"):
+                            gr.HTML('<p class="sec">04 — Configurações</p>')
+                            pasta_saida = gr.Textbox(
+                                label="Pasta de export",
+                                value=os.path.join(os.path.expanduser("~"), "Desktop", "viral-clipes"),
+                            )
+                            qualidade = gr.Dropdown(
+                                choices=list(QUALIDADES.keys()),
+                                value="1080p — Full HD (recomendado)",
+                                label="Qualidade",
+                            )
+                            perfil_processamento = gr.Dropdown(
+                                choices=list(PERFIS_PROCESSAMENTO.keys()),
+                                value="Equilibrado — recomendado",
+                                label="Velocidade",
+                            )
+                            retomar_processamento = gr.Checkbox(
+                                label="Retomar automaticamente de onde parou",
+                                value=True,
+                                info="Ao reabrir, carregue o mesmo vídeo, escolha quem priorizar e processe.",
+                            )
+                            remover_pausas = gr.Checkbox(
+                                label="Remover pausas e silêncios internos",
+                                value=False,
+                                info="Ideal para vídeos falados. Preserva uma pequena respiração.",
+                            )
+                            hook_automatico = gr.Checkbox(
+                                label="Hook automático (cold open)",
+                                value=False,
+                                info="Abre o clipe com a frase de maior impacto. Requer análise com IA.",
+                            )
+                            min_silencio_ms = gr.Slider(
+                                minimum=300, maximum=2000, value=700, step=100,
+                                label="Pausa mínima para remover (ms)",
+                            )
+                            margem_silencio_ms = gr.Slider(
+                                minimum=0, maximum=300, value=120, step=20,
+                                label="Respiração preservada (ms)",
+                            )
+                            legendar_automaticamente = gr.Checkbox(
+                                label="Aplicar legendas automáticas",
+                                value=False,
+                                info="Equivale a marcar Legendas ASS.",
+                            )
+                            gr.HTML('<p class="sec" style="margin-bottom:4px">Efeitos virais</p>')
+                            efeito_legenda = gr.Checkbox(
+                                label="Legendas ASS", value=False,
+                                info="Palavra por palavra, pop-up e karaokê.",
+                            )
+                            efeito_zoom = gr.Checkbox(
+                                label="Zoom dinâmico", value=False,
+                                info="Zoom nos momentos de ênfase.",
+                            )
+                            efeito_sfx = gr.Checkbox(
+                                label="Efeitos sonoros (SFX)", value=False,
+                                info="Efeitos sonoros automáticos.",
+                            )
 
-                    galeria_rostos = gr.Gallery(
-                        label="Pessoas detectadas", show_label=False,
-                        columns=4, height=220, object_fit="cover",
-                    )
-
-                    pessoas_opcoes = gr.CheckboxGroup(
-                        choices=[], value=[],
-                        label="✅ Marque quem priorizar:",
-                    )
-
-                gr.HTML('<p class="sec">03 — Transcrição & Análise</p>')
-                with gr.Row():
-                    idioma  = gr.Dropdown(choices=list(IDIOMAS.keys()),         value="Português",             label="Idioma")
-                    modelo  = gr.Dropdown(choices=list(MODELOS_WHISPER.keys()), value="small  — Rápido na GPU (recomendado)", label="Modelo Whisper")
-                    nicho   = gr.Dropdown(choices=list(NICHOS.keys()),          value="Podcast",             label="Nicho")
-
-                modo_offline = gr.Checkbox(
-                    label="Modo offline — sem API (não consome créditos)",
-                    value=MODO_OFFLINE_PADRAO,
-                    info="Ativado automaticamente quando a chave da API não está configurada.",
-                )
-
-                producao_automatica = gr.Checkbox(
-                    label="🚀 Produção automática — processar direto após a análise",
-                    value=False,
-                    info="Ao terminar TRANSCREVER E ANALISAR, o PROCESSAR VÍDEO inicia sozinho "
-                         "com as opções da seção 04 (qualidade, efeitos, hook etc.), sem precisar aprovar.",
-                )
-
-                with gr.Row():
-                    duracao_min = gr.Slider(minimum=15, maximum=120, value=30, step=5, label="Duração mínima (s)")
-                    duracao_max = gr.Slider(minimum=30, maximum=180, value=90, step=5, label="Duração máxima (s)")
-
-                with gr.Row(elem_classes="btn-analisar"):
-                    btn_analisar = gr.Button("TRANSCREVER E ANALISAR", scale=1)
-
-                log_analise = gr.Textbox(label="", interactive=False, lines=6, elem_classes="output-log")
-
-                gr.HTML('<p class="sec">04 — Export & Processamento</p>')
-                with gr.Row():
-                    pasta_saida = gr.Textbox(
-                        label="Pasta de export",
-                        value=os.path.join(os.path.expanduser("~"), "Desktop", "viral-clipes"),
-                        scale=2
-                    )
-                    qualidade = gr.Dropdown(
-                        choices=list(QUALIDADES.keys()),
-                        value="1080p — Full HD (recomendado)",
-                        label="Qualidade", scale=1
-                    )
-                    perfil_processamento = gr.Dropdown(
-                        choices=list(PERFIS_PROCESSAMENTO.keys()),
-                        value="Equilibrado — recomendado",
-                        label="Velocidade", scale=1
-                    )
-
-                with gr.Row():
-                    retomar_processamento = gr.Checkbox(
-                        label="Retomar automaticamente de onde parou",
-                        value=True,
-                        info="Ao reabrir, carregue o mesmo vídeo, escolha quem priorizar e processe.",
-                    )
-                    remover_pausas = gr.Checkbox(
-                        label="Remover automaticamente pausas e silêncios internos",
-                        value=False,
-                        info="Ideal para vídeos falados. Preserva uma pequena respiração.",
-                    )
-                    hook_automatico = gr.Checkbox(
-                        label="Hook automático (cold open)",
-                        value=False,
-                        info="O clipe abre com a frase de maior impacto antes de rodar do início. "
-                             "Requer análise com IA (a frase é identificada pelo Claude).",
-                    )
-
-                with gr.Row():
-                    min_silencio_ms = gr.Slider(
-                        minimum=300, maximum=2000, value=700, step=100,
-                        label="Pausa mínima para remover (ms)",
-                    )
-                    margem_silencio_ms = gr.Slider(
-                        minimum=0, maximum=300, value=120, step=20,
-                        label="Respiração preservada (ms)",
-                    )
-
-                legendar_automaticamente = gr.Checkbox(
-                    label="Aplicar legendas automáticas nos clipes gerados",
-                    value=False,
-                    info="Equivale a marcar 'Legendas ASS' abaixo (palavra por palavra, pop-up e karaokê).",
-                )
-
-                gr.HTML('<p class="sec" style="margin-bottom:4px">Efeitos virais após processamento</p>')
-                with gr.Row():
-                    efeito_legenda = gr.Checkbox(
-                        label="Legendas ASS",
-                        value=False,
-                        info="Palavra por palavra, pop-up e karaokê.",
-                    )
-                    efeito_zoom = gr.Checkbox(
-                        label="Zoom dinâmico",
-                        value=False,
-                        info="Zoom nos momentos de ênfase.",
-                    )
-                    efeito_sfx = gr.Checkbox(
-                        label="Efeitos sonoros (SFX)",
-                        value=False,
-                        info="Efeitos sonoros automáticos.",
-                    )
-
-                gr.HTML('<div style="height:16px"></div>')
-                with gr.Row():
-                    btn_processar = gr.Button("PROCESSAR VÍDEO", scale=3, variant="primary", elem_classes="btn-processar")
-                    btn_cancelar = gr.Button("CANCELAR", scale=1, variant="stop")
-
-                gr.HTML('<p class="sec" style="margin-top:28px">05 — Resultado</p>')
-                with gr.Row():
-                    btn_abrir_saida = gr.Button("Abrir pasta de saída", scale=1)
-                    btn_abrir_logs = gr.Button("Abrir pasta de logs", scale=1)
-                log_processo   = gr.Textbox(label="Log",      interactive=False, lines=10, elem_classes="output-log")
-                relatorio_out  = gr.Textbox(label="Relatório", interactive=False, lines=10, elem_classes="output-log")
-
-                gr.HTML('<p class="sec">06 — Preview</p>')
-                preview_gallery = gr.Gallery(label="", show_label=False, columns=3, height=300, object_fit="contain")
-
-                with gr.Row(visible=False, elem_classes="btn-detectar") as painel_enviar_legenda:
-                    opcoes_clipes = gr.Dropdown(choices=[], label="Escolha um clipe gerado para legendar:", scale=3)
-                    btn_enviar_legenda = gr.Button("ENVIAR CLIPE PARA LEGENDAS", scale=2)
-
+                        with gr.Row(elem_classes="process-actions"):
+                            btn_processar = gr.Button(
+                                "PROCESSAR VÍDEO", scale=3, variant="primary", elem_classes="btn-processar",
+                            )
+                            btn_cancelar = gr.Button("CANCELAR", scale=1, variant="stop")
                 # Eventos — Corte
                 btn_baixar.click(
                     fn=ao_baixar_link,
