@@ -279,12 +279,12 @@ body { overflow-x: hidden; }
 input[type=checkbox] { accent-color: var(--vc-accent) !important; }
 .gr-slider input[type=range] { accent-color: var(--vc-accent) !important; }
 .helper-note { margin: 18px 0 0; color: var(--vc-subtle); font-size: .78rem; line-height: 1.55; text-align: center; }
-/* Classic 2.3.2: desktop workspace constrained to the viewport. */
-html, body { width: 100%; height: 100%; overflow: hidden; }
-body { margin: 0 !important; }
+/* Classic 2.3.2: desktop workspace with reliable page scrolling. */
+html, body { width: 100%; min-height: 100%; }
+body { margin: 0 !important; overflow-y: auto; }
 .gradio-container {
-    width: 100% !important; height: 100dvh !important; max-width: none !important;
-    margin: 0 !important; padding: 0 12px 10px !important; overflow: hidden !important;
+    width: 100% !important; min-height: 100dvh !important; height: auto !important; max-width: none !important;
+    margin: 0 !important; padding: 0 12px 10px !important; overflow: visible !important;
 }
 .classic-topbar {
     height: 50px; display: flex; align-items: center; justify-content: space-between;
@@ -297,18 +297,17 @@ body { margin: 0 !important; }
 .classic-status { display: inline-flex; align-items: center; gap: 7px; }
 .classic-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--vc-accent); }
 .gradio-container .tabs {
-    height: calc(100dvh - 60px) !important; min-height: 0 !important;
+    height: auto !important; min-height: calc(100dvh - 60px) !important;
     display: flex !important; flex-direction: column !important; border-radius: 12px !important;
 }
 .gradio-container .tab-container { flex: 0 0 44px; padding: 4px 8px !important; }
 .gradio-container .tab-container button { min-height: 34px !important; padding: 0 14px !important; }
-.gradio-container .tabitem { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }
+.gradio-container .tabitem { flex: 1 1 auto !important; min-height: 0 !important; overflow: visible !important; }
 .classic-shell {
     display: grid !important;
     grid-template-columns: minmax(170px, .72fr) minmax(520px, 3.1fr) minmax(290px, 1.35fr) !important;
     gap: 10px !important;
-    height: calc(100dvh - 196px); max-height: calc(100dvh - 196px);
-    min-height: 360px; padding: 10px !important; overflow: hidden !important;
+    min-height: calc(100dvh - 104px); padding: 10px !important; overflow: visible !important;
 }
 .classic-shell > .workflow-panel, .classic-shell > .workspace-panel, .classic-shell > .inspector-panel {
     min-width: 0 !important; min-height: 0 !important; margin: 0 !important;
@@ -316,13 +315,13 @@ body { margin: 0 !important; }
 }
 .workflow-panel { overflow: hidden !important; padding: 12px !important; }
 .workspace-panel {
-    overflow-y: auto !important; overflow-x: hidden !important; padding: 0 12px 14px !important;
+    overflow-y: visible !important; overflow-x: hidden !important; padding: 0 12px 14px !important;
     scrollbar-gutter: stable; overscroll-behavior: contain; scrollbar-width: auto;
     scrollbar-color: var(--vc-border-strong) var(--vc-surface);
 }
-.inspector-panel { display: flex !important; flex-direction: column !important; overflow: hidden !important; padding: 0 !important; }
+.inspector-panel { display: flex !important; flex-direction: column !important; overflow: visible !important; padding: 0 !important; }
 .inspector-scroll {
-    flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 0 12px 12px !important;
+    flex: 1 1 auto !important; min-height: 0 !important; overflow-y: visible !important; padding: 0 12px 12px !important;
     scrollbar-gutter: stable; overscroll-behavior: contain; scrollbar-width: auto;
     scrollbar-color: var(--vc-border-strong) var(--vc-surface);
 }

@@ -22,15 +22,16 @@ class ClassicDesktopLayoutTests(unittest.TestCase):
         self.assertIn('elem_classes="workspace-panel"', self.source)
         self.assertIn('elem_classes="inspector-panel"', self.source)
 
-    def test_viewport_has_no_global_scroll(self):
+    def test_page_scrolls_when_workspace_exceeds_viewport(self):
         self.assertIn("height: 100dvh", self.source)
-        self.assertIn("overflow: hidden", self.source)
+        self.assertIn("body { margin: 0 !important; overflow-y: auto; }", self.source)
+        self.assertNotIn("html, body { width: 100%; height: 100%; overflow: hidden; }", self.source)
+        self.assertIn("min-height: calc(100dvh - 104px)", self.source)
+        self.assertNotIn("height: calc(100dvh - 196px)", self.source)
         self.assertIn("@media (max-width: 1200px)", self.source)
 
     def test_shell_fits_remaining_viewport_and_panels_scroll_visibly(self):
         self.assertNotIn("height: calc(100dvh - 116px)", self.source)
-        self.assertIn("height: calc(100dvh - 196px)", self.source)
-        self.assertIn("max-height: calc(100dvh - 196px)", self.source)
         self.assertGreaterEqual(self.source.count("scrollbar-gutter: stable"), 2)
         self.assertGreaterEqual(self.source.count("overscroll-behavior: contain"), 2)
         self.assertIn(".workspace-panel::-webkit-scrollbar", self.source)
