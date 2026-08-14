@@ -18,7 +18,7 @@ pacotes = [
     "certifi", "orjson", "typer", "pydantic", "tqdm", "safehttpx", "httpx",
     "httpcore", "anyio", "starlette", "uvicorn", "python_multipart", "h11",
     "rich", "click", "tomlkit", "packaging", "filelock", "sniffio", "groovy",
-    "whisper", "mediapipe", "cv2", "matplotlib", "contourpy", "kiwisolver",
+    "whisper", "mediapipe", "cv2", "matplotlib", "contourpy", "kiwisolver", "yt_dlp",
 ]
 for p in pacotes:
     try:
@@ -27,7 +27,7 @@ for p in pacotes:
         pass
 
 hidden = []
-for m in ["gradio", "gradio_client", "whisper", "mediapipe", "anthropic", "uvicorn", "starlette"]:
+for m in ["gradio", "gradio_client", "whisper", "mediapipe", "anthropic", "uvicorn", "starlette", "yt_dlp"]:
     try:
         hidden += collect_submodules(m)
     except Exception:
