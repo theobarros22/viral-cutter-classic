@@ -44,6 +44,14 @@ class ClassicDesktopLayoutTests(unittest.TestCase):
         self.assertIn("fn=ao_processar,", self.source)
         self.assertIn("btn_enviar_legenda.click(", self.source)
 
+    def test_processing_ui_exposes_resume_choice_and_live_progress(self):
+        self.assertIn('label="Se houver trabalho anterior"', self.source)
+        self.assertIn('"Retomar trabalho"', self.source)
+        self.assertIn('"Reprocessar tudo"', self.source)
+        self.assertIn('"Cancelar"', self.source)
+        self.assertIn("progresso_evento_callback=cb_evento", self.source)
+        self.assertIn("progress(percentual", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

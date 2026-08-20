@@ -11,6 +11,7 @@ import sys
 import glob as glob_mod
 import logging
 import time
+from datetime import datetime
 
 from runtime import (
     configurar_ambiente,
@@ -484,11 +485,12 @@ def ao_analisar(idioma_label, modelo_label, nicho_label, duracao_min, duracao_ma
 
 def ao_processar(
     pasta_saida, qualidade_label, perfil_label,
-    retomar_processamento, remover_pausas,
+    modo_retomada, remover_pausas,
     min_silencio_ms, margem_silencio_ms,
     pessoas_selecionadas, aplicar_legendas_auto,
     efeito_legenda=False, efeito_zoom=False, efeito_sfx=False,
     aplicar_hook=False,
+    progress=gr.Progress(track_tqdm=False),
 ):
     # O checkbox "legendas automáticas" ativa o mesmo efeito de legendas
     # da etapa 4 (antes ele não estava ligado a nada e não fazia nada).
@@ -503,10 +505,20 @@ def ao_processar(
 
     if not _estado.get("caminho_video"):
         return _erro("❌ Detecte as pessoas primeiro.")
+    if modo_retomada == "Cancelar":
+        return _erro("ℹ️ Processamento cancelado antes de iniciar. Nenhum arquivo foi alterado.")
+
+    retomar_processamento = modo_retomada == "Retomar trabalho"
     if not _estado.get("segmentos") and not retomar_processamento:
         return _erro("❌ Analise o vídeo primeiro.")
     if not pasta_saida or not pasta_saida.strip():
         return _erro("❌ Informe a pasta de destino.")
+    if modo_retomada == "Reprocessar tudo":
+        pasta_saida = os.path.join(
+            pasta_saida,
+            "reprocessados",
+            datetime.now().strftime("%Y%m%d-%H%M%S"),
+        )
 
     qualidade = QUALIDADES.get(qualidade_label, "1080p")
     perfil = PERFIS_PROCESSAMENTO.get(perfil_label, "equilibrado")
@@ -522,6 +534,19 @@ def ao_processar(
     log_lines = []
     def cb(msg): log_lines.append(msg)
 
+    def cb_evento(evento):
+        percentual = max(0.0, min(1.0, float(evento.get("percentual_global", 0)) / 100.0))
+        restante = evento.get("estimativa_segundos")
+        restante_texto = "estimativa calculando"
+        if restante is not None:
+            restante_texto = f"restam cerca de {max(1, round(restante / 60))} min"
+        descricao = (
+            f"{evento.get('etapa', 'processando')} · "
+            f"clipe {evento.get('clipe_atual', 0)}/{evento.get('total', 0)} · "
+            f"{evento.get('concluidos', 0)} concluído(s) · {restante_texto}"
+        )
+        progress(percentual, desc=descricao)
+
     try:
         resultados = etapa3_processar(
             caminho_video=_estado["caminho_video"],
@@ -536,6 +561,7 @@ def ao_processar(
             margem_silencio_ms=int(margem_silencio_ms),
             aplicar_hook=aplicar_hook,
             progresso_callback=cb,
+            progresso_evento_callback=cb_evento,
         )
 
         # ── Etapa 4: Efeitos Virais (legendas ASS + zoom + SFX) ──────────
@@ -602,7 +628,7 @@ def ao_processar(
 def ao_processar_automatico(
     producao_auto,
     pasta_saida, qualidade_label, perfil_label,
-    retomar_processamento, remover_pausas,
+    modo_retomada, remover_pausas,
     min_silencio_ms, margem_silencio_ms,
     pessoas_selecionadas, aplicar_legendas_auto,
     efeito_legenda=False, efeito_zoom=False, efeito_sfx=False,
@@ -623,7 +649,7 @@ def ao_processar_automatico(
         return sem_acao
     return ao_processar(
         pasta_saida, qualidade_label, perfil_label,
-        retomar_processamento, remover_pausas,
+        modo_retomada, remover_pausas,
         min_silencio_ms, margem_silencio_ms,
         pessoas_selecionadas, aplicar_legendas_auto,
         efeito_legenda, efeito_zoom, efeito_sfx,
@@ -1032,10 +1058,11 @@ def criar_interface():
                                 value="Equilibrado — recomendado",
                                 label="Velocidade",
                             )
-                            retomar_processamento = gr.Checkbox(
-                                label="Retomar automaticamente de onde parou",
-                                value=True,
-                                info="Ao reabrir, carregue o mesmo vídeo, escolha quem priorizar e processe.",
+                            modo_retomada = gr.Radio(
+                                choices=["Retomar trabalho", "Reprocessar tudo", "Cancelar"],
+                                value="Retomar trabalho",
+                                label="Se houver trabalho anterior",
+                                info="Retomar aproveita clipes válidos. Reprocessar cria uma nova pasta e preserva a produção anterior.",
                             )
                             remover_pausas = gr.Checkbox(
                                 label="Remover pausas e silêncios internos",
@@ -1102,7 +1129,7 @@ def criar_interface():
                     inputs=[
                         producao_automatica,
                         pasta_saida, qualidade, perfil_processamento,
-                        retomar_processamento, remover_pausas,
+                        modo_retomada, remover_pausas,
                         min_silencio_ms, margem_silencio_ms,
                         pessoas_opcoes, legendar_automaticamente,
                         efeito_legenda, efeito_zoom, efeito_sfx, hook_automatico,
@@ -1113,7 +1140,7 @@ def criar_interface():
                     fn=ao_processar,
                     inputs=[
                         pasta_saida, qualidade, perfil_processamento,
-                        retomar_processamento, remover_pausas,
+                        modo_retomada, remover_pausas,
                         min_silencio_ms, margem_silencio_ms,
                         pessoas_opcoes, legendar_automaticamente,
                         efeito_legenda, efeito_zoom, efeito_sfx, hook_automatico,
