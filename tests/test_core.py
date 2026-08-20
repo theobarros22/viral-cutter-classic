@@ -24,6 +24,7 @@ from enquadramento import (
     _calcular_x_crop,
     _calcular_crop_seguro,
     _classificar_modos_fala,
+    _compor_fallback_split,
     _compor_frame_seguro,
     _filtrar_rostos_na_zona_de_cabeca,
     _gerar_plano,
@@ -431,6 +432,28 @@ class TestCore(unittest.TestCase):
         )
         self.assertGreaterEqual(w, 516)
         self.assertGreaterEqual(h, 918)
+
+    def test_fallback_split_preenche_os_dois_paineis_sem_desfoque(self):
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        frame[:, :320] = (0, 0, 220)
+        frame[:, 320:] = (220, 0, 0)
+
+        saida = _compor_fallback_split(frame, 360, 640)
+
+        self.assertEqual(saida.shape, (640, 360, 3))
+        self.assertGreater(saida[:320].mean(), 0)
+        self.assertGreater(saida[320:].mean(), 0)
+        self.assertFalse(np.array_equal(saida[:320], saida[320:]))
+
+    def test_cena_sem_pessoa_e_sem_falante_usa_fallback_split(self):
+        cenas = [{
+            "frame_ini": 0, "frame_fim": 30, "n_pessoas": 0,
+            "lado_a": 0.5, "lado_b": 0.5,
+        }]
+
+        plano = _gerar_plano(cenas, [None] * 30, 30.0, 30)
+
+        self.assertEqual({p["modo"] for p in plano}, {"FALLBACK_SPLIT"})
     def test_duas_pessoas_segue_quem_fala_nao_posicao_de_rosto(self):
         # Cena de 2+ pessoas ignora lado_a/lado_b (posiÃ§Ã£o de rosto por
         # cena podia mirar num objeto decorativo â€” ver seÃ§Ã£o 10/11 do

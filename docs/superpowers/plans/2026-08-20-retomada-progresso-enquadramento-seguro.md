@@ -13,7 +13,7 @@
 - Preservar exportação local MP4 H.264 em 9:16.
 - Não sobrescrever saída válida sem a escolha explícita de reprocessar tudo.
 - Sem serviços remotos, banco de dados ou nova dependência.
-- Fallback de enquadramento deve ser 9:16 mais aberto; nunca zoom agressivo, pessoa cortada ou região lateral vazia.
+- Fallback de enquadramento deve preencher o 9:16 com dois painéis horizontais seguros; nunca zoom agressivo, fundo desfocado, pessoa cortada ou região lateral vazia.
 - O checkpoint deve continuar sendo gravado atomicamente.
 - A versão Classic estável deve continuar executando seus testes existentes.
 
@@ -196,9 +196,12 @@ def test_crop_seguro_abre_quando_rosto_esta_perto_da_borda(self):
     self.assertLessEqual(crop[0], 1720)
     self.assertEqual(crop[2] - crop[0], round((crop[3] - crop[1]) * 9 / 16))
 
-def test_crop_sem_alvo_usa_quadro_9_por_16_central_mais_aberto(self):
-    crop = calcular_crop_seguro(None, 1920, 1080)
-    self.assertEqual(crop, (656, 0, 1264, 1080))
+def test_fallback_split_preenche_canvas_sem_desfocar(self):
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    saida = compor_fallback_split(frame, 1080, 1920)
+    self.assertEqual(saida.shape, (1920, 1080, 3))
+    self.assertTrue(np.any(saida[:960]))
+    self.assertTrue(np.any(saida[960:]))
 
 def test_crop_que_exclui_alvo_e_rejeitado(self):
     self.assertFalse(validar_crop_seguro((0, 0, 608, 1080), (1500, 100, 1800, 800), 1920, 1080))
@@ -227,10 +230,12 @@ def calcular_crop_seguro(alvo, largura, altura, margem=0.08):
 ```
 
 Use as caixas humanas reais da cena como alvo; não use somente a coordenada de
-fala para autorizar o crop. Antes de escrever o frame, valide o crop. Se a
-validação falhar, use o fallback central aberto. Se o fallback também não puder
-conter uma pessoa válida, interrompa aquele clipe com `status="revisar"`,
-preserve o motivo no checkpoint e não o coloque entre os concluídos.
+fala para autorizar o crop. Antes de escrever o frame, valide o crop. Se o crop
+único falhar, componha dois painéis horizontais empilhados que preencham todo o
+canvas 9:16; cada painel usa crop amplo independente, sem desfoque. Se nenhum
+dos painéis puder conter pessoa válida, interrompa aquele clipe com
+`status="revisar"`, preserve o motivo no checkpoint e não o coloque entre os
+concluídos.
 
 - [ ] **Step 4: Run framing regressions and real smoke**
 

@@ -72,11 +72,13 @@ O sistema valida cada crop antes de renderizar:
 - não pode aumentar o zoom além do necessário para preencher 9:16;
 - mudanças entre cenas precisam respeitar suavização, sem saltos bruscos.
 
-Quando não houver confiança suficiente na pessoa detectada, o fallback obrigatório
-é um crop 9:16 central e mais aberto, derivado do quadro original. Ele nunca
-escolhe uma região lateral vazia. Se nem esse fallback preservar pessoa válida
-depois da validação, o clipe recebe estado `revisar` e não é marcado como
-concluído automaticamente.
+Quando um crop único 9:16 não puder conter a pessoa sem corte, o fallback
+obrigatório divide o canvas vertical inteiro em dois painéis horizontais
+empilhados, sem fundo desfocado nem faixas vazias. Cada painel recebe seu próprio
+crop amplo e seguro do mesmo frame, para que o 9:16 fique preenchido e a pessoa
+apareça inteira em pelo menos um dos painéis. Se os dois painéis não puderem ser
+compostos com pessoa válida, o clipe recebe estado `revisar` e não é marcado
+como concluído automaticamente.
 
 ## Fluxo
 

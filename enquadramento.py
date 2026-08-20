@@ -148,7 +148,9 @@ def _calcular_crop_seguro(
     centro_x = float(np.mean(centros_x))
     esquerda_humana = min(cx - maior_rosto * 1.6 for cx in centros_x)
     direita_humana = max(cx + maior_rosto * 1.6 for cx in centros_x)
-    largura_desejada = max(largura_max * 0.85, maior_rosto * 4.0, direita_humana - esquerda_humana)
+    # O usuário prioriza enquadramento aberto: em fonte horizontal o crop
+    # usa toda a altura disponível, sem zoom adicional no rosto.
+    largura_desejada = largura_max
     crop_w = int(round(min(largura_max, largura_desejada)))
     crop_w = max(2, crop_w + crop_w % 2)
     crop_h = int(round(crop_w / float(proporcao)))
@@ -170,6 +172,28 @@ def _calcular_crop_seguro(
     y = max(0, min(altura - crop_h, y))
     return x, y, crop_w, crop_h
 
+
+def _compor_fallback_split(frame, saida_w: int, saida_h: int):
+    """Preenche 9:16 com dois painéis horizontais, sem fundo desfocado."""
+    altura, largura = frame.shape[:2]
+    topo_h = saida_h // 2
+    base_h = saida_h - topo_h
+
+    def painel(destino_h, esquerda):
+        proporcao = saida_w / float(destino_h)
+        crop_h = min(altura, int(round(largura / proporcao)))
+        crop_h = max(2, crop_h - crop_h % 2)
+        crop_w = min(largura, int(round(crop_h * proporcao)))
+        crop_w = max(2, crop_w - crop_w % 2)
+        x = max(0, min(largura - crop_w, esquerda))
+        y = max(0, (altura - crop_h) // 2)
+        recorte = frame[y:y + crop_h, x:x + crop_w]
+        return cv2.resize(recorte, (saida_w, destino_h), interpolation=INTERPOLACAO_EXPORT)
+
+    topo = painel(topo_h, 0)
+    base = painel(base_h, largura)
+    return np.vstack((topo, base))
+
 def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int):
     """Compõe SOLO/GRUPO/SPLIT com cada pessoa centralizada e quadro aberto."""
     altura, largura = frame.shape[:2]
@@ -184,6 +208,8 @@ def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int):
         )
 
     modo = plano.get("modo", "SOLO_A")
+    if modo == "FALLBACK_SPLIT":
+        return _compor_fallback_split(frame, saida_w, saida_h)
     alvo_a = (
         float(plano["xa"]), float(plano.get("ya", 0.40)),
         float(plano.get("ta", 0.0)),
@@ -690,10 +716,11 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
                 ultimo_modo_valido, ultimo_xa, ultimo_xb = "SOLO_A", x_falante, x_falante
                 ultimo_ta = 0.0
             else:
-                # Herda o enquadramento da última cena que tinha gente.
+                # Sem rosto e sem falante confiável: não aponta para o centro
+                # vazio; preenche o vertical com dois painéis horizontais.
                 for f in range(ini, min(fim, total_frames)):
-                    plano[f] = {"modo": ultimo_modo_valido, "xa": ultimo_xa, "xb": ultimo_xb,
-                                "ya": ultimo_ya, "yb": ultimo_yb, "ta": ultimo_ta}
+                    plano[f] = {"modo": "FALLBACK_SPLIT", "xa": 0.5, "xb": 0.5,
+                                "ya": Y_PADRAO, "yb": Y_PADRAO, "ta": 0.0}
             continue
 
         if cena["n_pessoas"] == 1:
