@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from checkpoint import (
+    atualizar_progresso,
     carregar_checkpoint,
     inspecionar_retomada,
     novo_checkpoint,
@@ -568,6 +569,24 @@ class TestCore(unittest.TestCase):
             )
 
             self.assertEqual([item["arquivo"] for item in resultados], [arquivo])
+
+    def test_progresso_sem_amostra_nao_inventa_estimativa(self):
+        evento = atualizar_progresso(
+            {}, indice=1, etapa="corte", concluidos=0, total=3,
+            inicio_sessao=10.0, agora=15.0, amostras=[]
+        )
+
+        self.assertEqual(evento["percentual_global"], 0.0)
+        self.assertIsNone(evento["estimativa_segundos"])
+
+    def test_progresso_usa_media_dos_clipes_concluidos(self):
+        evento = atualizar_progresso(
+            {}, indice=2, etapa="enquadramento", concluidos=1, total=3,
+            inicio_sessao=10.0, agora=30.0, amostras=[20.0]
+        )
+
+        self.assertEqual(evento["percentual_global"], 33.3)
+        self.assertEqual(evento["estimativa_segundos"], 40)
 
     # Resposta simulada da validaÃ§Ã£o FFprobe (v2.3) para testes que usam
     # arquivos falsos â€” o ffprobe real reprovaria os bytes de mentira e o

@@ -666,14 +666,15 @@ def etapa3_processar(
     min_silencio_ms: int = 700,
     margem_silencio_ms: int = 120,
     aplicar_hook: bool = False,
-    progresso_callback=None
+    progresso_callback=None,
+    progresso_evento_callback=None,
 ) -> list:
     """Corta e enquadra os clipes, salvando um checkpoint apos cada etapa."""
     import time
     import traceback
     from datetime import datetime
     from checkpoint import (
-        caminho_checkpoint, carregar_checkpoint, criar_id_trabalho,
+        atualizar_progresso, caminho_checkpoint, carregar_checkpoint, criar_id_trabalho,
         inspecionar_retomada, novo_checkpoint, salvar_checkpoint,
     )
     from cortes import cortar_clipe, cortar_clipe_com_hook, validar_hook
@@ -778,6 +779,19 @@ def etapa3_processar(
     resultados_por_indice = dict(concluidos)
     inicio_sessao = time.monotonic()
     novos_concluidos = 0
+    amostras_tempo = []
+
+    def publicar_progresso(indice, etapa):
+        evento = atualizar_progresso(
+            checkpoint, indice=indice, etapa=etapa,
+            concluidos=len(resultados_por_indice), total=total,
+            inicio_sessao=inicio_sessao, agora=time.monotonic(),
+            amostras=amostras_tempo,
+        )
+        salvar_checkpoint(arquivo_checkpoint, checkpoint)
+        if progresso_evento_callback:
+            progresso_evento_callback(evento)
+        return evento
     if concluidos:
         log(f"RETOMANDO: {len(concluidos)}/{total} clipe(s) ja concluidos.")
     log(f"Checkpoint: {arquivo_checkpoint}")
@@ -804,7 +818,7 @@ def etapa3_processar(
             "fim": seg["fim"],
             "arquivo": caminho_final,
         }
-        salvar_checkpoint(arquivo_checkpoint, checkpoint)
+        publicar_progresso(i, "corte")
 
         try:
             inicio_corte = time.monotonic()
@@ -854,7 +868,7 @@ def etapa3_processar(
                     os.remove(caminho_compacto)
 
             checkpoint["clipes"][str(i)]["etapa"] = "deteccao_falante"
-            salvar_checkpoint(arquivo_checkpoint, checkpoint)
+            publicar_progresso(i, "deteccao_falante")
             log(f"   [{i}/{total}] Detectando falante...")
             inicio_falante = time.monotonic()
             intervalo_falante = 30 if perfil == "rapido" else (8 if perfil == "qualidade" else 15)
@@ -872,7 +886,7 @@ def etapa3_processar(
                 )
 
             checkpoint["clipes"][str(i)]["etapa"] = "enquadramento"
-            salvar_checkpoint(arquivo_checkpoint, checkpoint)
+            publicar_progresso(i, "enquadramento")
             log(f"   [{i}/{total}] Enquadrando...")
             inicio_enquadramento = time.monotonic()
             sucesso = aplicar_enquadramento(
@@ -885,7 +899,7 @@ def etapa3_processar(
 
             # â”€â”€ ValidaÃ§Ã£o FFprobe pÃ³s-enquadramento â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             checkpoint["clipes"][str(i)]["etapa"] = "validacao"
-            salvar_checkpoint(arquivo_checkpoint, checkpoint)
+            publicar_progresso(i, "validacao")
             # DuraÃ§Ã£o esperada = corte base + hook (cold open) âˆ’ pausas removidas.
             # Sem esses ajustes a validaÃ§Ã£o rejeitava clipes corretos: o hook
             # ADICIONA segundos e o remove-pausas SUBTRAI.
@@ -984,17 +998,14 @@ def etapa3_processar(
             concluidos_total = len(resultados_por_indice)
             percentual = concluidos_total / total * 100
             decorrido = time.monotonic() - inicio_sessao
-            media_por_clipe = decorrido / novos_concluidos
-            estimativa = media_por_clipe * (total - concluidos_total)
+            amostras_tempo.append(time.monotonic() - inicio_corte)
             checkpoint["clipes"][str(i)] = {
                 "status": "concluido",
                 "etapa": "concluido",
                 "resultado": resultado,
             }
-            checkpoint["progresso_percentual"] = round(percentual, 1)
-            checkpoint["estimativa_segundos"] = round(estimativa)
             checkpoint["ultimo_erro"] = None
-            salvar_checkpoint(arquivo_checkpoint, checkpoint)
+            evento = publicar_progresso(i, "concluido")
             log(f"   Salvo: {nome_arquivo}")
             log(
                 f"   Tempos: corte {formatar_tempo(tempo_corte)} | "
@@ -1003,7 +1014,7 @@ def etapa3_processar(
             )
             log(
                 f"   Progresso: {concluidos_total}/{total} ({percentual:.0f}%)"
-                f" | estimativa restante: {formatar_tempo(estimativa)}"
+                f" | estimativa restante: {formatar_tempo(evento['estimativa_segundos'] or 0)}"
             )
         except Exception as erro:
             checkpoint["status"] = "interrompido"

@@ -151,5 +151,29 @@ def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
     }
 
 
+def atualizar_progresso(
+    checkpoint, *, indice, etapa, concluidos, total,
+    inicio_sessao, agora, amostras,
+):
+    """Registra progresso sem estimar tempo antes de haver uma amostra real."""
+    decorrido = max(0.0, agora - inicio_sessao)
+    estimativa = None
+    if amostras:
+        estimativa = round(sum(amostras) / len(amostras) * max(0, total - concluidos))
+    evento = {
+        "tipo": "progresso",
+        "clipe_atual": indice,
+        "etapa": etapa,
+        "concluidos": concluidos,
+        "total": total,
+        "percentual_global": round(100 * concluidos / total, 1) if total else 100.0,
+        "percentual_etapa": 100.0 if etapa == "concluido" else 0.0,
+        "decorrido_segundos": round(decorrido),
+        "estimativa_segundos": estimativa,
+    }
+    checkpoint["progresso"] = evento
+    return evento
+
+
 def _agora():
     return datetime.now().astimezone().isoformat(timespec="seconds")
