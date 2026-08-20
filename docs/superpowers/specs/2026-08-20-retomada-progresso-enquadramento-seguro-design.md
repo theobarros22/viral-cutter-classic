@@ -30,6 +30,17 @@ tiver mídia válida e duração compatível com o segmento planejado. Arquivos
 válidos encontrados na pasta, mesmo sem estado concluído salvo, serão listados
 como concluídos e não serão renderizados outra vez.
 
+### Recuperação pelo log
+
+O log persistente da execução também participa da recuperação. Quando o
+checkpoint estiver ausente, incompleto ou tiver ficado para trás por uma
+interrupção, o sistema lê os registros de início, validação e salvamento de cada
+clipe para reconstruir a lista de candidatos concluídos. O log nunca é aceito
+sozinho como prova: cada candidato encontrado nele precisa existir na pasta de
+saída e passar novamente pela validação de mídia. Assim, um clipe já exportado
+não refaz análise de rostos, corte ou enquadramento; a produção reinicia somente
+no primeiro item ainda pendente.
+
 Antes de iniciar, a interface exibirá uma decisão explícita:
 
 - **Retomar trabalho:** processa somente clipes pendentes, falhos ou inválidos;
@@ -101,6 +112,8 @@ saída válida é sobrescrita sem a escolha explícita de reprocessar.
 - Interromper após um clipe e retomar: ele é pulado, os demais continuam.
 - Encontrar arquivo válido sem checkpoint concluído: ele é reaproveitado.
 - Encontrar arquivo incompleto ou inválido: ele é refeito.
+- Perder o checkpoint após o log registrar um clipe salvo: o log aponta o
+  candidato, a mídia é validada e o próximo clipe pendente é retomado.
 - Painel mostra percentuais coerentes, etapa, tempo decorrido e estimativa.
 - Pessoa próxima a qualquer borda recebe crop aberto com margem.
 - Detecção ausente ou instável nunca gera crop lateral vazio; usa fallback aberto
