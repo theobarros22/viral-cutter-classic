@@ -30,13 +30,21 @@ def nvenc_disponivel() -> bool:
     return _NVENC_DISPONIVEL
 
 
-def argumentos_encoder(temporario: bool = False) -> list:
-    """Usa RTX quando disponível; mantém libx264 como fallback universal."""
+def argumentos_encoder(temporario: bool = False, perfil: str = "equilibrado") -> list:
+    """Usa RTX quando disponível com parâmetros otimizados; mantém libx264 como fallback universal."""
     if nvenc_disponivel():
-        qualidade = "23" if temporario else "19"
-        preset = "p1" if temporario else "p4"
-        return ["-c:v", "h264_nvenc", "-preset", preset, "-cq", qualidade]
+        if temporario:
+            return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-cq", "23"]
+        if perfil == "rapido":
+            return ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "22"]
+        if perfil == "qualidade":
+            return ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "17", "-spatial-aq", "1", "-temporal-aq", "1"]
+        # Padrão: equilibrado
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-spatial-aq", "1", "-temporal-aq", "1"]
 
-    preset = "ultrafast" if temporario else "fast"
-    crf = "22" if temporario else "18"
-    return ["-c:v", "libx264", "-preset", preset, "-crf", crf]
+    if temporario or perfil == "rapido":
+        return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22"]
+    if perfil == "qualidade":
+        return ["-c:v", "libx264", "-preset", "medium", "-crf", "16"]
+    # Padrão: equilibrado
+    return ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]

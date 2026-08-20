@@ -229,6 +229,7 @@ def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int):
         return painel([alvo_a, alvo_b], saida_w, saida_h)
     return painel([alvo_a], saida_w, saida_h)
 
+
 def aplicar_enquadramento(
     caminho_entrada: str,
     caminho_saida: str,
@@ -260,12 +261,6 @@ def aplicar_enquadramento(
         chave_cache = None
 
     passo_cena = 4 if perfil == "rapido" else (1 if perfil == "qualidade" else 2)
-    # 25/30: medido no Papo Reto que em plano aberto multicâmera o
-    # MediaPipe só acha a pessoa mais distante/de perfil em ~16% dos
-    # frames individuais (mic e ângulo atrapalham). Com 6 amostras a
-    # chance de nunca pegá-la numa cena era ~34%; com 25 cai a ~1%. Custo
-    # extra é pequeno (poucos ms de MediaPipe por amostra) e a mediana
-    # dos clusters fica mais estável entre execuções.
     amostras_cena = 3 if perfil == "rapido" else (30 if perfil == "qualidade" else 25)
 
     if chave_cache is not None and chave_cache in _cache_analise_visual:
@@ -305,20 +300,273 @@ def aplicar_enquadramento(
     total_frames = cenas[-1]["frame_fim"] if cenas else 0
     plano = _gerar_plano(cenas, posicoes_falante, fps, total_frames)
 
-    # ── Passo 4: Processa frame a frame ───────────────────────────────────
-    crop_w_916 = int(altura * 9 / 16)
-    if crop_w_916 % 2 != 0:
-        crop_w_916 -= 1
+    # ── Passo 4: Renderização de Alta Performance (FFmpeg direto ou Pipe Fallback)
+    segmentos = _agrupar_planos_em_segmentos(plano, fps)
 
+    # Render rápido quando o plano é composto por blocos estáveis (<= 50 shots)
+    if segmentos and len(segmentos) <= 50:
+        print(f"   🚀 Renderizando {total_frames} frames ({len(segmentos)} bloco(s) estáveis) via FFmpeg nativo...")
+        sucesso_ffmpeg = _renderizar_enquadramento_ffmpeg(
+            caminho_entrada, caminho_saida, segmentos, largura, altura,
+            saida_w, saida_h, perfil=perfil
+        )
+        if sucesso_ffmpeg and os.path.isfile(caminho_saida) and os.path.getsize(caminho_saida) > 1000:
+            print("   ✅ Enquadramento concluído com sucesso!")
+            return True
+        print("   ⚠️ Grafo FFmpeg indisponível/falhou. Acionando fallback frame a frame seguro...")
+    else:
+        print("   ℹ️ Transições complexas detectadas. Usando renderizador seguro por pipe...")
+
+    # Fallback seguro frame a frame via pipe
+    return _renderizar_enquadramento_pipe(
+        caminho_entrada, caminho_saida, plano, largura, altura, fps,
+        saida_w, saida_h, total_frames, perfil=perfil
+    )
+
+
+def _agrupar_planos_em_segmentos(plano: list, fps: float) -> list:
+    """Agrupa frames contíguos com mesmo enquadramento em shots temporais estáveis."""
+    if not plano:
+        return []
+    fps = fps if fps and fps > 0 else 30.0
+    segmentos = []
+    seg_atual = None
+
+    def _chave_plano(p):
+        return (
+            p.get("modo", "SOLO_A"),
+            round(float(p.get("xa", 0.5)), 4),
+            round(float(p.get("ya", 0.4)), 4),
+            round(float(p.get("ta", 0.0)), 4),
+            round(float(p.get("xb", p.get("xa", 0.5))), 4),
+            round(float(p.get("yb", p.get("ya", 0.4))), 4),
+            round(float(p.get("tb", p.get("ta", 0.0))), 4),
+        )
+
+    for f_idx, p in enumerate(plano):
+        chave = _chave_plano(p)
+        if seg_atual is None or chave != seg_atual["chave"]:
+            if seg_atual is not None:
+                seg_atual["frame_fim"] = f_idx
+                seg_atual["end_s"] = f_idx / fps
+                segmentos.append(seg_atual)
+            seg_atual = {
+                "chave": chave,
+                "plano": p,
+                "frame_ini": f_idx,
+                "frame_fim": f_idx + 1,
+                "start_s": f_idx / fps,
+                "end_s": (f_idx + 1) / fps,
+            }
+        else:
+            seg_atual["frame_fim"] = f_idx + 1
+            seg_atual["end_s"] = (f_idx + 1) / fps
+
+    if seg_atual is not None:
+        segmentos.append(seg_atual)
+
+    return segmentos
+
+
+def _calcular_filtros_shot(plano: dict, largura: int, altura: int, saida_w: int, saida_h: int):
+    """Calcula os parâmetros exatos de corte/escala para um shot sem alterar matemática."""
+    modo = plano.get("modo", "SOLO_A")
+    alvo_a = (
+        float(plano.get("xa", 0.5)),
+        float(plano.get("ya", 0.40)),
+        float(plano.get("ta", 0.0)),
+    )
+    alvo_b = (
+        float(plano.get("xb", plano.get("xa", 0.5))),
+        float(plano.get("yb", 0.40)),
+        float(plano.get("tb", plano.get("ta", 0.0))),
+    )
+
+    if modo in ("SOLO_A", "SOLO_B"):
+        alvo = alvo_a if modo == "SOLO_A" else alvo_b
+        x, y, w, h = _calcular_crop_seguro([alvo], largura, altura, saida_w / float(saida_h))
+        return {"tipo": "solo", "crop": (x, y, w, h), "scale": (saida_w, saida_h)}
+
+    if modo == "GRUPO":
+        x, y, w, h = _calcular_crop_seguro([alvo_a, alvo_b], largura, altura, saida_w / float(saida_h))
+        return {"tipo": "solo", "crop": (x, y, w, h), "scale": (saida_w, saida_h)}
+
+    if modo == "SPLIT":
+        topo_h = saida_h // 2
+        base_h = saida_h - topo_h
+        xa, ya, wa, ha = _calcular_crop_seguro([alvo_a], largura, altura, saida_w / float(topo_h))
+        xb, yb, wb, hb = _calcular_crop_seguro([alvo_b], largura, altura, saida_w / float(base_h))
+        return {
+            "tipo": "split",
+            "top_crop": (xa, ya, wa, ha),
+            "top_scale": (saida_w, topo_h),
+            "bot_crop": (xb, yb, wb, hb),
+            "bot_scale": (saida_w, base_h),
+        }
+
+    # FALLBACK_SPLIT
+    topo_h = saida_h // 2
+    base_h = saida_h - topo_h
+    prop_top = saida_w / float(topo_h)
+    crop_h_top = min(altura, int(round(largura / prop_top)))
+    crop_h_top = max(2, crop_h_top - crop_h_top % 2)
+    crop_w_top = min(largura, int(round(crop_h_top * prop_top)))
+    crop_w_top = max(2, crop_w_top - crop_w_top % 2)
+    x_top = max(0, min(largura - crop_w_top, 0))
+    y_top = max(0, (altura - crop_h_top) // 2)
+
+    prop_bot = saida_w / float(base_h)
+    crop_h_bot = min(altura, int(round(largura / prop_bot)))
+    crop_h_bot = max(2, crop_h_bot - crop_h_bot % 2)
+    crop_w_bot = min(largura, int(round(crop_h_bot * prop_bot)))
+    crop_w_bot = max(2, crop_w_bot - crop_w_bot % 2)
+    x_bot = max(0, min(largura - crop_w_bot, largura))
+    y_bot = max(0, (altura - crop_h_bot) // 2)
+
+    return {
+        "tipo": "split",
+        "top_crop": (x_top, y_top, crop_w_top, crop_h_top),
+        "top_scale": (saida_w, topo_h),
+        "bot_crop": (x_bot, y_bot, crop_w_bot, crop_h_bot),
+        "bot_scale": (saida_w, base_h),
+    }
+
+
+def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, saida_w: int, saida_h: int) -> str:
+    """Monta o filter_complex completo otimizado para o FFmpeg."""
+    n_seg = len(segmentos)
+    if n_seg == 0:
+        return ""
+
+    if n_seg == 1:
+        shot = _calcular_filtros_shot(segmentos[0]["plano"], largura, altura, saida_w, saida_h)
+        if shot["tipo"] == "solo":
+            x, y, w, h = shot["crop"]
+            sw, sh = shot["scale"]
+            return f"[0:v]crop={w}:{h}:{x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[vout]"
+        else:
+            tx, ty, tw, th = shot["top_crop"]
+            tsw, tsh = shot["top_scale"]
+            bx, by, bw, bh = shot["bot_crop"]
+            bsw, bsh = shot["bot_scale"]
+            return (
+                f"[0:v]split=2[top_in][bot_in];"
+                f"[top_in]crop={tw}:{th}:{tx}:{ty},scale={tsw}:{tsh}:flags=bilinear,setsar=1[top];"
+                f"[bot_in]crop={bw}:{bh}:{bx}:{by},scale={bsw}:{bsh}:flags=bilinear,setsar=1[bot];"
+                f"[top][bot]vstack,setsar=1[vout]"
+            )
+
+    linhas = []
+    ramos_in = "".join(f"[in{k}]" for k in range(n_seg))
+    linhas.append(f"[0:v]split={n_seg}{ramos_in}")
+
+    for k, seg in enumerate(segmentos):
+        start_s = seg["start_s"]
+        end_s = seg["end_s"]
+        shot = _calcular_filtros_shot(seg["plano"], largura, altura, saida_w, saida_h)
+
+        if shot["tipo"] == "solo":
+            x, y, w, h = shot["crop"]
+            sw, sh = shot["scale"]
+            linhas.append(
+                f"[in{k}]trim=start={start_s:.3f}:end={end_s:.3f},setpts=PTS-STARTPTS,"
+                f"crop={w}:{h}:{x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[v{k}]"
+            )
+        else:
+            tx, ty, tw, th = shot["top_crop"]
+            tsw, tsh = shot["top_scale"]
+            bx, by, bw, bh = shot["bot_crop"]
+            bsw, bsh = shot["bot_scale"]
+            linhas.append(
+                f"[in{k}]trim=start={start_s:.3f}:end={end_s:.3f},setpts=PTS-STARTPTS,split=2[top_in{k}][bot_in{k}]"
+            )
+            linhas.append(
+                f"[top_in{k}]crop={tw}:{th}:{tx}:{ty},scale={tsw}:{tsh}:flags=bilinear,setsar=1[top{k}]"
+            )
+            linhas.append(
+                f"[bot_in{k}]crop={bw}:{bh}:{bx}:{by},scale={bsw}:{bsh}:flags=bilinear,setsar=1[bot{k}]"
+            )
+            linhas.append(
+                f"[top{k}][bot{k}]vstack,setsar=1[v{k}]"
+            )
+
+    concat_in = "".join(f"[v{k}]" for k in range(n_seg))
+    linhas.append(f"{concat_in}concat=n={n_seg}:v=1:a=0[vout]")
+    return ";".join(linhas)
+
+
+def _renderizar_enquadramento_ffmpeg(
+    caminho_entrada: str,
+    caminho_saida: str,
+    segmentos: list,
+    largura: int,
+    altura: int,
+    saida_w: int,
+    saida_h: int,
+    perfil: str = "equilibrado",
+) -> bool:
+    """Renderiza diretamente pelo FFmpeg filter_complex acelerado por hardware."""
+    try:
+        filtro_complexo = _construir_grafo_enquadramento(
+            segmentos, largura, altura, saida_w, saida_h
+        )
+        if not filtro_complexo:
+            return False
+
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", caminho_entrada,
+            "-filter_complex", filtro_complexo,
+            "-map", "[vout]", "-map", "0:a?",
+        ]
+        cmd += argumentos_encoder(temporario=False, perfil=perfil)
+        cmd += [
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-shortest",
+            "-movflags", "+faststart",
+            caminho_saida,
+        ]
+
+        resultado = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if resultado.returncode != 0:
+            print(f"   ⚠️ FFmpeg filter_complex falhou: {resultado.stderr[-500:]}")
+            if os.path.exists(caminho_saida):
+                os.remove(caminho_saida)
+            return False
+
+        return True
+    except Exception as e:
+        print(f"   ⚠️ Exceção na renderização direta FFmpeg: {e}")
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+        return False
+
+
+def _renderizar_enquadramento_pipe(
+    caminho_entrada: str,
+    caminho_saida: str,
+    plano: list,
+    largura: int,
+    altura: int,
+    fps: float,
+    saida_w: int,
+    saida_h: int,
+    total_frames: int,
+    perfil: str = "equilibrado",
+) -> bool:
+    """Fallback: processamento frame a frame em Python conectado por pipe ao FFmpeg."""
     cap = cv2.VideoCapture(caminho_entrada)
     if not cap.isOpened():
         cap.release()
         print("   ⚠️ Não foi possível abrir o vídeo para enquadramento.")
         return False
 
-    # Envia frames diretamente para o FFmpeg. Antes o programa criava um MP4
-    # temporário inteiro e depois codificava tudo novamente em uma segunda
-    # passagem, dobrando tempo, disco e perda de qualidade.
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "bgr24",
@@ -326,7 +574,7 @@ def aplicar_enquadramento(
         "-i", caminho_entrada,
         "-map", "0:v", "-map", "1:a?",
     ]
-    cmd += argumentos_encoder(temporario=False)
+    cmd += argumentos_encoder(temporario=False, perfil=perfil)
     cmd += [
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-shortest",
@@ -340,9 +588,6 @@ def aplicar_enquadramento(
         stderr=subprocess.PIPE,
     )
 
-    # Drena o stderr em paralelo. Sem isso, se o FFmpeg encher o buffer do
-    # pipe de erro enquanto ainda estamos escrevendo frames no stdin, os
-    # dois processos travam um esperando o outro (deadlock clássico).
     import threading
     _stderr_chunks = []
 
@@ -355,33 +600,18 @@ def aplicar_enquadramento(
     _t_stderr = threading.Thread(target=_drenar_stderr, daemon=True)
     _t_stderr.start()
 
-    print(f"   🎞️ Processando {total_frames} frames...")
     frame_idx = 0
     erro_pipe = False
-
-    # Suavização do crop: dentro da mesma cena o crop desliza suavemente
-    # até o alvo (sem tremer); em corte de cena ele salta seco — exatamente
-    # como um editor humano trabalha.
-    inicios_cena = {c["frame_ini"] for c in cenas}
-    ALPHA_SUAVE = 0.18  # fração da distância percorrida por frame
-    x_suave = None
-    zoom_suave = None
-
-    def _aproximar(atual, alvo):
-        return alvo if atual is None else atual + (alvo - atual) * ALPHA_SUAVE
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Pega o plano deste frame (modo + posições)
         if frame_idx < len(plano):
             p = plano[frame_idx]
         else:
             p = plano[-1] if plano else {"modo": "CENTRAL", "xa": 0.5, "xb": 0.5}
-
-        modo = p["modo"]
 
         frame_final = _compor_frame_seguro(frame, p, saida_w, saida_h)
 
@@ -412,9 +642,9 @@ def aplicar_enquadramento(
             pass
 
     if codigo == 0 and not erro_pipe:
-        print("   ✅ Enquadramento concluído!")
+        print("   ✅ Enquadramento concluído (pipe fallback)!")
     else:
-        print(f"   ⚠️ Erro no FFmpeg ao exportar: {stderr[-600:]}")
+        print(f"   ⚠️ Erro no FFmpeg ao exportar (pipe): {stderr[-600:]}")
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
 
