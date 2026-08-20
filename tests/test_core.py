@@ -5,7 +5,13 @@ import types
 import unittest
 from unittest.mock import patch
 
-from checkpoint import carregar_checkpoint, resultado_valido, salvar_checkpoint
+from checkpoint import (
+    carregar_checkpoint,
+    inspecionar_retomada,
+    novo_checkpoint,
+    resultado_valido,
+    salvar_checkpoint,
+)
 from cortes import (
     ajustar_cortes_com_silencio,
     calcular_intervalos_fala,
@@ -502,6 +508,66 @@ class TestCore(unittest.TestCase):
             with open(caminho, "wb") as arquivo:
                 arquivo.write(b"incompleto")
             self.assertFalse(resultado_valido({"arquivo": caminho}))
+
+    def test_retomada_reaproveita_saida_valida_sem_status_concluido(self):
+        with tempfile.TemporaryDirectory() as pasta, patch("checkpoint.resultado_valido", return_value=True):
+            arquivo = os.path.join(pasta, "01_Teste.mp4")
+            with open(arquivo, "wb") as destino:
+                destino.write(b"saida")
+            segmentos = [{"inicio": 0, "fim": 10, "titulo": "Teste"}]
+            checkpoint = novo_checkpoint("abc", __file__, segmentos, "1080p", [])
+            checkpoint["clipes"]["1"] = {"status": "processando", "arquivo": arquivo}
+
+            plano = inspecionar_retomada(checkpoint, pasta, segmentos)
+
+            self.assertEqual(plano["concluidos"], {1: arquivo})
+            self.assertEqual(plano["pendentes"], [])
+
+    def test_retomada_mantem_pendente_saida_invalida(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            arquivo = os.path.join(pasta, "01_Teste.mp4")
+            with open(arquivo, "wb") as destino:
+                destino.write(b"incompleto")
+            segmentos = [{"inicio": 0, "fim": 10, "titulo": "Teste"}]
+            checkpoint = novo_checkpoint("abc", __file__, segmentos, "1080p", [])
+            checkpoint["clipes"]["1"] = {"status": "concluido", "arquivo": arquivo}
+
+            plano = inspecionar_retomada(checkpoint, pasta, segmentos)
+
+            self.assertEqual(plano["concluidos"], {})
+            self.assertEqual(plano["invalidos"], [1])
+            self.assertEqual(plano["pendentes"], [1])
+
+    def test_processamento_pula_saida_valida_encontrada_na_pasta(self):
+        modulos = {
+            "cortes": types.SimpleNamespace(
+                cortar_clipe=lambda *_a, **_k: self.fail("não deveria recortar"),
+                cortar_clipe_com_hook=lambda *_a, **_k: self.fail("não deveria recortar"),
+                validar_hook=validar_hook,
+            ),
+            "enquadramento": types.SimpleNamespace(
+                aplicar_enquadramento=lambda *_a, **_k: self.fail("não deveria enquadrar")
+            ),
+            "rostos": types.SimpleNamespace(
+                detectar_quem_fala_por_frame=lambda *_a, **_k: self.fail("não deveria detectar")
+            ),
+        }
+        with tempfile.TemporaryDirectory() as pasta, patch.dict(sys.modules, modulos), \
+                patch("checkpoint.resultado_valido", return_value=True):
+            video = os.path.join(pasta, "video.mp4")
+            with open(video, "wb") as origem:
+                origem.write(b"video")
+            pasta_saida = os.path.join(pasta, "video")
+            os.makedirs(pasta_saida)
+            arquivo = os.path.join(pasta_saida, "01_Teste.mp4")
+            with open(arquivo, "wb") as destino:
+                destino.write(b"saida valida")
+
+            resultados = pipeline.etapa3_processar(
+                video, pasta, [{"inicio": 0, "fim": 10, "titulo": "Teste"}], qualidade="720p"
+            )
+
+            self.assertEqual([item["arquivo"] for item in resultados], [arquivo])
 
     # Resposta simulada da validaÃ§Ã£o FFprobe (v2.3) para testes que usam
     # arquivos falsos â€” o ffprobe real reprovaria os bytes de mentira e o

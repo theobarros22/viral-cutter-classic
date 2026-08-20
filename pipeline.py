@@ -674,7 +674,7 @@ def etapa3_processar(
     from datetime import datetime
     from checkpoint import (
         caminho_checkpoint, carregar_checkpoint, criar_id_trabalho,
-        novo_checkpoint, resultados_concluidos, salvar_checkpoint,
+        inspecionar_retomada, novo_checkpoint, salvar_checkpoint,
     )
     from cortes import cortar_clipe, cortar_clipe_com_hook, validar_hook
     from enquadramento import aplicar_enquadramento
@@ -752,7 +752,29 @@ def etapa3_processar(
         )
         salvar_checkpoint(arquivo_checkpoint, checkpoint)
 
-    concluidos = resultados_concluidos(checkpoint) if retomar else {}
+    inventario = inspecionar_retomada(checkpoint, pasta_saida, segmentos) if retomar else {
+        "concluidos": {}, "pendentes": list(range(1, total + 1)), "invalidos": []
+    }
+    concluidos = {}
+    for indice, arquivo in inventario["concluidos"].items():
+        item = checkpoint["clipes"].get(str(indice), {})
+        resultado = item.get("resultado") or {
+            "titulo": segmentos[indice - 1].get("titulo"),
+            "arquivo": arquivo,
+            "score_viral": segmentos[indice - 1].get("score_viral", 0),
+            "resumo": segmentos[indice - 1].get("resumo", ""),
+            "duracao": round(segmentos[indice - 1]["fim"] - segmentos[indice - 1]["inicio"], 1),
+            "inicio": segmentos[indice - 1]["inicio"],
+            "fim": segmentos[indice - 1]["fim"],
+        }
+        concluidos[indice] = resultado
+        checkpoint["clipes"][str(indice)] = {
+            "status": "concluido", "etapa": "concluido", "resultado": resultado,
+        }
+    for indice in inventario["invalidos"]:
+        checkpoint["clipes"].setdefault(str(indice), {})["status"] = "pendente"
+    if retomar and (inventario["concluidos"] or inventario["invalidos"]):
+        salvar_checkpoint(arquivo_checkpoint, checkpoint)
     resultados_por_indice = dict(concluidos)
     inicio_sessao = time.monotonic()
     novos_concluidos = 0

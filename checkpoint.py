@@ -115,5 +115,41 @@ def resultados_concluidos(dados):
     return concluidos
 
 
+def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
+    """Classifica saídas existentes sem renderizar novamente mídia válida."""
+    concluidos = {}
+    pendentes = []
+    invalidos = []
+    clipes = (checkpoint or {}).get("clipes", {})
+
+    for indice, _segmento in enumerate(segmentos, 1):
+        item = clipes.get(str(indice), {})
+        resultado = item.get("resultado") or {}
+        arquivo = item.get("arquivo") or resultado.get("arquivo")
+        if not arquivo:
+            prefixo = f"{indice:02d}_"
+            encontrados = [
+                entrada.path for entrada in os.scandir(pasta_saida)
+                if entrada.is_file() and entrada.name.startswith(prefixo)
+                and entrada.name.lower().endswith(".mp4")
+            ] if os.path.isdir(pasta_saida) else []
+            arquivo = encontrados[0] if len(encontrados) == 1 else None
+
+        if arquivo and resultado_valido({"arquivo": arquivo}):
+            concluidos[indice] = arquivo
+        else:
+            pendentes.append(indice)
+            if arquivo and os.path.exists(arquivo):
+                invalidos.append(indice)
+
+    return {
+        "checkpoint_encontrado": checkpoint is not None,
+        "concluidos": concluidos,
+        "pendentes": pendentes,
+        "invalidos": invalidos,
+        "total": len(segmentos),
+    }
+
+
 def _agora():
     return datetime.now().astimezone().isoformat(timespec="seconds")
