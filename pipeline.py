@@ -28,6 +28,56 @@ configurar_console_utf8()
 # Cache entre etapas
 _cache = {}
 
+
+def _pasta_estado() -> str:
+    """Pasta gravavel onde o estado da analise sobrevive ao fechamento do app."""
+    from runtime import pasta_dados
+    caminho = os.path.join(pasta_dados(), "estado")
+    os.makedirs(caminho, exist_ok=True)
+    return caminho
+
+
+def _persistir_estado(caminho_video: str) -> None:
+    """Grava pessoas, transcricao e segmentos para a retomada nao re-transcrever."""
+    from checkpoint import salvar_estado_analise
+    try:
+        salvar_estado_analise(_pasta_estado(), caminho_video, {
+            "pessoas": _cache.get("pessoas") or [],
+            "transcricao": _cache.get("transcricao"),
+            "segmentos": _cache.get("segmentos") or [],
+        })
+    except (OSError, ValueError, ImportError):
+        # Persistir e uma otimizacao de retomada: falhar aqui nunca derruba
+        # o processamento em andamento.
+        pass
+
+
+def restaurar_estado_analise(caminho_video: str) -> dict:
+    """Reidrata o cache em memoria a partir do estado salvo em disco.
+
+    Retorna o que foi reaproveitado, para a interface mostrar no resumo.
+    """
+    from checkpoint import carregar_estado_analise
+    if not caminho_video or not os.path.isfile(caminho_video):
+        return {}
+    if _cache.get("caminho_video") == caminho_video and _cache.get("transcricao"):
+        return {}
+    try:
+        dados = carregar_estado_analise(_pasta_estado(), caminho_video)
+    except (OSError, ValueError, ImportError):
+        return {}
+    if not dados:
+        return {}
+    reaproveitado = {}
+    for chave in ("pessoas", "transcricao", "segmentos"):
+        valor = dados.get(chave)
+        if valor:
+            _cache[chave] = valor
+            reaproveitado[chave] = len(valor) if isinstance(valor, (list, dict)) else 1
+    if reaproveitado:
+        _cache["caminho_video"] = caminho_video
+    return reaproveitado
+
 # â”€â”€ Cancelamento cooperativo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _cancel_event = threading.Event()
 _processamentos_ativos = set()
@@ -378,6 +428,7 @@ def etapa1_detectar_pessoas(
     pessoas = salvar_previews(pessoas, pasta_temp)
     _cache["pessoas"] = pessoas
     _cache["caminho_video"] = caminho_video
+    _persistir_estado(caminho_video)
 
     log(f"âœ… {len(pessoas)} pessoa(s) encontrada(s). Escolha quem priorizar.")
     return pessoas
@@ -429,6 +480,7 @@ def etapa2_analisar(
     log("âœ‚ï¸ Limites de corte refinados com timestamps de palavras.")
 
     _cache["segmentos"] = segmentos
+    _persistir_estado(caminho_video)
     log(f"âœ… {len(segmentos)} segmentos identificados!")
     return segmentos
 

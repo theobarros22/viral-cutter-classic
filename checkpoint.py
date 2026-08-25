@@ -184,3 +184,53 @@ def atualizar_progresso(
 
 def _agora():
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------------------
+# Estado da analise (etapas 1 e 2) — sobrevive ao fechamento do aplicativo
+# ---------------------------------------------------------------------------
+
+def assinatura_video(caminho_video: str) -> str:
+    """Identifica o video por caminho + tamanho + data, sem reler o arquivo."""
+    estatistica = os.stat(caminho_video)
+    texto = json.dumps(
+        {
+            "video": os.path.abspath(caminho_video),
+            "tamanho": estatistica.st_size,
+            "modificado_ns": estatistica.st_mtime_ns,
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16]
+
+
+def caminho_estado_analise(pasta_estado: str, assinatura: str) -> str:
+    return os.path.join(pasta_estado, f"analise_{assinatura}.json")
+
+
+def salvar_estado_analise(pasta_estado: str, caminho_video: str, dados: dict) -> str:
+    """Persiste pessoas, transcricao e segmentos para retomar sem re-transcrever."""
+    os.makedirs(pasta_estado, exist_ok=True)
+    caminho = caminho_estado_analise(pasta_estado, assinatura_video(caminho_video))
+    conteudo = dict(dados)
+    conteudo["video"] = os.path.abspath(caminho_video)
+    conteudo["atualizado_em"] = _agora()
+    temporario = f"{caminho}.tmp"
+    with open(temporario, "w", encoding="utf-8") as arquivo:
+        json.dump(conteudo, arquivo, ensure_ascii=False, default=str)
+    os.replace(temporario, caminho)
+    return caminho
+
+
+def carregar_estado_analise(pasta_estado: str, caminho_video: str) -> dict:
+    """Le o estado salvo do video; devolve {} quando nao existe ou esta corrompido."""
+    try:
+        caminho = caminho_estado_analise(pasta_estado, assinatura_video(caminho_video))
+    except OSError:
+        return {}
+    try:
+        with open(caminho, encoding="utf-8") as arquivo:
+            dados = json.load(arquivo)
+    except (OSError, ValueError):
+        return {}
+    return dados if isinstance(dados, dict) else {}

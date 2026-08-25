@@ -95,7 +95,13 @@ FOLGA_HORIZONTAL_ROSTO = 2.8  # largura mínima do crop em relação ao rosto
 # Nenhum clipe é concluído com a pessoa principal fora do quadro ou encostada
 # na borda. A caixa humana é estimada a partir do rosto detectado e precisa
 # caber no crop com margem livre nas quatro bordas.
+# A validação tem DOIS níveis. Só a CABEÇA é obrigatória: num close de
+# podcast os ombros simplesmente não cabem num 9:16 e exigi-los reprovava
+# até os quadros corretos. Os ombros entram como preferência, para escolher
+# o melhor centro — nunca para reprovar o clipe.
 MARGEM_SEGURA_BORDA = 0.035     # 3.5% do lado do crop livre em cada borda
+LARGURA_CABECA_ROSTO = 1.5      # cabeça ≈ 1.5x a largura do rosto detectado
+ALTURA_CABECA_META = 0.85       # meia altura da cabeça, em alturas de rosto
 LARGURA_OMBROS_ROSTO = 2.4      # vão dos ombros ≈ 2.4x a largura do rosto
 ALTURA_ROSTO_SOBRE_LARGURA = 1.3  # rosto é mais alto que largo
 ALTURA_CABECA_ROSTO = 1.0       # topo da cabeça acima do centro do rosto
@@ -215,6 +221,41 @@ def _caixa_humana(alvo, largura: int, altura: int):
     )
 
 
+def _caixa_cabeca(alvo, largura: int, altura: int):
+    """Caixa OBRIGATÓRIA: cabeça inteira, do topo ao queixo, com folga.
+
+    É o que nunca pode ser cortado. Ombros e tronco são tratados como
+    preferência em `_caixa_humana`.
+    """
+    try:
+        tam = float(alvo[2])
+    except (TypeError, IndexError, ValueError):
+        return None
+    if tam < MIN_TAMANHO_ROSTO:
+        return None
+
+    cx = float(alvo[0]) * largura
+    cy = float(alvo[1]) * altura
+    rosto_w = tam * largura
+    rosto_h = rosto_w * ALTURA_ROSTO_SOBRE_LARGURA
+
+    meia_w = rosto_w * LARGURA_CABECA_ROSTO / 2.0
+    meia_h = rosto_h * ALTURA_CABECA_META
+
+    return (
+        max(0.0, min(float(largura), cx - meia_w)),
+        max(0.0, min(float(altura), cy - meia_h)),
+        max(0.0, min(float(largura), cx + meia_w)),
+        max(0.0, min(float(altura), cy + meia_h)),
+    )
+
+
+def _caixas_cabecas(alvos: list, largura: int, altura: int) -> list:
+    """Caixas de cabeça válidas — o critério que reprova um enquadramento."""
+    caixas = [_caixa_cabeca(a, largura, altura) for a in (alvos or [])]
+    return [c for c in caixas if c is not None]
+
+
 def _caixas_humanas(alvos: list, largura: int, altura: int) -> list:
     """Caixas humanas válidas dos alvos informados (descarta rostos duvidosos)."""
     caixas = [_caixa_humana(a, largura, altura) for a in (alvos or [])]
@@ -277,13 +318,24 @@ def _ajustar_crop_para_caixas(crop, caixas: list, largura: int, altura: int):
 def _crop_validado(alvos: list, largura: int, altura: int, proporcao: float) -> tuple:
     """Crop conservador já corrigido e validado. Retorna (crop, ok, motivo)."""
     crop = _calcular_crop_seguro(alvos, largura, altura, proporcao)
-    caixas = _caixas_humanas(alvos, largura, altura)
-    if not caixas:
+    cabecas = _caixas_cabecas(alvos, largura, altura)
+    if not cabecas:
         # Sem rosto confiável: mantém o crop central, mas sinaliza que a cena
         # não tem foco humano validado (B-roll ou detecção fraca).
         return crop, False, "sem_alvo_valido"
-    crop = _ajustar_crop_para_caixas(crop, caixas, largura, altura)
-    ok, motivo = _validar_crop_alvos(crop, caixas, largura, altura)
+
+    # 1ª tentativa: enquadrar pessoa inteira (cabeça + ombros).
+    corpos = _caixas_humanas(alvos, largura, altura)
+    if corpos:
+        candidato = _ajustar_crop_para_caixas(crop, corpos, largura, altura)
+        if _validar_crop_alvos(candidato, cabecas, largura, altura)[0]:
+            return candidato, True, ""
+
+    # 2ª tentativa: garantir ao menos a cabeça inteira com margem.
+    crop = _ajustar_crop_para_caixas(crop, cabecas, largura, altura)
+    ok, motivo = _validar_crop_alvos(crop, cabecas, largura, altura)
+    if not ok and motivo == "pessoa_maior_que_o_quadro":
+        motivo = "cabeca_maior_que_o_quadro"
     return crop, ok, motivo
 
 
@@ -564,7 +616,7 @@ def _calcular_filtros_shot(
 
     def _fallback():
         layout = _geometria_fallback_split(largura, altura, saida_w, saida_h)
-        caixas = _caixas_humanas([alvo_a, alvo_b], largura, altura)
+        caixas = _caixas_cabecas([alvo_a, alvo_b], largura, altura)
         if not caixas:
             # Sem gente detectada: os dois painéis cobrem a largura inteira,
             # então não há o que cortar — é B-roll, não é falha.
