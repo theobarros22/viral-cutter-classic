@@ -1047,10 +1047,15 @@ def etapa3_processar(
             # concluido - vai para revisao manual com o motivo registrado.
             precisa_revisao = bool(relatorio_enq.get("revisar"))
             motivos_revisao = list(relatorio_enq.get("motivos") or [])
+            instantes_revisao = list(relatorio_enq.get("instantes") or [])
             if precisa_revisao:
+                _onde = (
+                    " em " + ", ".join(f"{t:.1f}s" for t in instantes_revisao[:6])
+                    if instantes_revisao else ""
+                )
                 log(
                     f"   [{i}/{total}] REVISAR enquadramento: "
-                    f"{', '.join(motivos_revisao)}"
+                    f"{', '.join(motivos_revisao)}{_onde}"
                 )
 
             resultado = {
@@ -1058,6 +1063,7 @@ def etapa3_processar(
                 "arquivo": caminho_final,
                 "revisar": precisa_revisao,
                 "motivos_revisao": motivos_revisao,
+                "instantes_revisao": instantes_revisao,
                 "score_viral": seg.get("score_viral", 0),
                 "resumo": seg.get("resumo", ""),
                 "duracao": round(seg["fim"] - seg["inicio"], 1),

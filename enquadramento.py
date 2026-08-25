@@ -67,6 +67,13 @@ PASSO_DETECCAO_CENA = 2
 # falsos positivos como rostos na TV do cenário, estátuas e manequins.
 MIN_TAMANHO_ROSTO = 0.018
 
+# Teto de plausibilidade: num podcast nenhum rosto ocupa um terco da largura
+# do quadro. Medido no clipe 13 do Papo Reto #60, um falso positivo de
+# tam=0.358 na estante (x=0.81) fazia a cena inteira cair em "sem modo
+# seguro" — descartar o alvo devolve o crop central aberto, que e o certo
+# para um plano aberto.
+MAX_TAMANHO_ROSTO = 0.32
+
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
 # Falsos positivos do cenário caem fora dela: TV/quadros na parede e
 # estátuas na estante ficam ALTOS (Y < 0.30); objetos na mesa em primeiro
@@ -206,7 +213,7 @@ def _caixa_humana(alvo, largura: int, altura: int):
         tam = float(alvo[2])
     except (TypeError, IndexError, ValueError):
         return None
-    if tam < MIN_TAMANHO_ROSTO:
+    if not MIN_TAMANHO_ROSTO <= tam <= MAX_TAMANHO_ROSTO:
         return None
 
     cx = float(alvo[0]) * largura
@@ -237,7 +244,7 @@ def _caixa_cabeca(alvo, largura: int, altura: int):
         tam = float(alvo[2])
     except (TypeError, IndexError, ValueError):
         return None
-    if tam < MIN_TAMANHO_ROSTO:
+    if not MIN_TAMANHO_ROSTO <= tam <= MAX_TAMANHO_ROSTO:
         return None
 
     cx = float(alvo[0]) * largura
@@ -370,8 +377,12 @@ def _geometria_fallback_split(largura: int, altura: int, saida_w: int, saida_h: 
     }
 
 
-def _registrar(relatorio, motivo: str, revisar: bool = False) -> None:
-    """Acumula motivos de segurança do enquadramento para o pipeline."""
+def _registrar(relatorio, motivo: str, revisar: bool = False, instante=None) -> None:
+    """Acumula motivos de segurança do enquadramento para o pipeline.
+
+    `instante` (segundos) marca ONDE o problema acontece — sem isso a revisão
+    manual tinha de assistir o clipe inteiro procurando o quadro ruim.
+    """
     if relatorio is None or not motivo:
         return
     motivos = relatorio.setdefault("motivos", [])
@@ -379,6 +390,11 @@ def _registrar(relatorio, motivo: str, revisar: bool = False) -> None:
         motivos.append(motivo)
     if revisar:
         relatorio["revisar"] = True
+        if instante is not None:
+            instantes = relatorio.setdefault("instantes", [])
+            marca = round(float(instante), 1)
+            if marca not in instantes:
+                instantes.append(marca)
 
 
 def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int, relatorio: dict = None):
@@ -511,7 +527,9 @@ def _reportar_seguranca(relatorio: dict) -> None:
     """Imprime o resultado da validação de enquadramento seguro."""
     motivos = relatorio.get("motivos") or []
     if relatorio.get("revisar"):
-        print(f"   ⚠️ Enquadramento marcado para REVISAR: {', '.join(motivos)}")
+        instantes = relatorio.get("instantes") or []
+        onde = f" em {', '.join(f'{t:.1f}s' for t in instantes[:6])}" if instantes else ""
+        print(f"   ⚠️ Enquadramento marcado para REVISAR: {', '.join(motivos)}{onde}")
         return
     if motivos:
         print(f"   ✅ Enquadramento concluído (ajustes: {', '.join(motivos)}).")
@@ -570,6 +588,7 @@ def _calcular_filtros_shot(
     saida_w: int,
     saida_h: int,
     relatorio: dict = None,
+    instante=None,
 ):
     """Resolve o layout do shot já VALIDADO contra corte de pessoa.
 
@@ -640,7 +659,7 @@ def _calcular_filtros_shot(
     if modo == "FALLBACK_SPLIT":
         layout, ok, motivo = _fallback()
         if not ok:
-            _registrar(relatorio, motivo, revisar=True)
+            _registrar(relatorio, motivo, revisar=True, instante=instante)
         return layout
 
     if modo in ("SOLO_A", "SOLO_B"):
@@ -682,7 +701,7 @@ def _calcular_filtros_shot(
         _registrar(relatorio, "degradado_para_paineis_horizontais")
         return layout_fb
 
-    _registrar(relatorio, motivo_fb or motivo or "sem_modo_seguro", revisar=True)
+    _registrar(relatorio, motivo_fb or motivo or "sem_modo_seguro", revisar=True, instante=instante)
     return layout_fb
 
 
@@ -693,7 +712,7 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
         return ""
 
     if n_seg == 1:
-        shot = _calcular_filtros_shot(segmentos[0]["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio)
+        shot = _calcular_filtros_shot(segmentos[0]["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio, instante=segmentos[0].get("start_s"))
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
             sw, sh = shot["scale"]
@@ -717,7 +736,7 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
     for k, seg in enumerate(segmentos):
         start_s = seg["start_s"]
         end_s = seg["end_s"]
-        shot = _calcular_filtros_shot(seg["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio)
+        shot = _calcular_filtros_shot(seg["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio, instante=seg.get("start_s"))
 
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
@@ -1038,7 +1057,7 @@ def _analisar_rostos_por_cena(
                 for r in rostos:
                     # Filtra rostos minúsculos: TV do cenário, estátuas,
                     # manequins na estante — falsos positivos clássicos.
-                    if r.get("w", 0) < MIN_TAMANHO_ROSTO:
+                    if not MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO:
                         continue
                     rostos_cena.append(r)
 

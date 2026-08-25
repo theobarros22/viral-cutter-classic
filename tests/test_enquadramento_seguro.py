@@ -117,11 +117,11 @@ def test_scene_without_faces_is_not_flagged_for_review():
 
 
 def test_person_larger_than_any_panel_is_flagged_for_review():
-    """Rosto gigante em quadro estreito: nenhum modo cabe -> revisar."""
-    plano = {"modo": "SOLO_A", "xa": 0.5, "ya": 0.5, "ta": 0.60}
+    """Rosto plausivel em quadro estreito: nenhum modo cabe -> revisar."""
+    plano = {"modo": "SOLO_A", "xa": 0.5, "ya": 0.5, "ta": 0.25}
     relatorio = {}
     enq._calcular_filtros_shot(
-        plano, 640, 480, SAIDA_W, SAIDA_H, relatorio=relatorio
+        plano, 960, 540, SAIDA_W, SAIDA_H, relatorio=relatorio
     )
     assert relatorio.get("revisar") is True
     assert relatorio["motivos"]
@@ -216,3 +216,36 @@ def test_incompatible_face_sizes_are_not_two_people():
     ws = [0.10, 0.10, 0.10, 0.025, 0.025, 0.025]
 
     assert enq._agrupar_posicoes_cena(xs, ys, ws)["n_pessoas"] == 1
+
+
+def test_implausibly_large_face_is_discarded():
+    """Falso positivo gigante (clipe 13 do Papo Reto) nao vira alvo de crop."""
+    assert enq._caixa_cabeca((0.814, 0.55, 0.358), LARGURA, ALTURA) is None
+    assert enq._caixa_humana((0.814, 0.55, 0.358), LARGURA, ALTURA) is None
+
+
+def test_open_shot_with_bogus_face_falls_back_to_center_not_review():
+    plano = {"modo": "SOLO_A", "xa": 0.814, "ya": 0.55, "ta": 0.358}
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    assert not relatorio.get("revisar")
+    assert layout["tipo"] == "solo"
+    assert "cena_sem_rosto_confiavel" in relatorio["motivos"]
+
+
+def test_a_real_close_up_is_still_a_valid_target():
+    """O teto nao pode descartar close legitimo: 0.25 continua valendo."""
+    assert enq._caixa_cabeca((0.5, 0.45, 0.25), LARGURA, ALTURA) is not None
+
+
+def test_review_report_says_where_the_problem_is():
+    """Revisao manual precisa do instante, nao so do motivo."""
+    plano = {"modo": "SOLO_A", "xa": 0.5, "ya": 0.5, "ta": 0.25}
+    relatorio = {}
+    enq._calcular_filtros_shot(
+        plano, 960, 540, SAIDA_W, SAIDA_H, relatorio=relatorio, instante=42.7
+    )
+    assert relatorio["revisar"] is True
+    assert relatorio["instantes"] == [42.7]
