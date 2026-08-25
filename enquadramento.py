@@ -108,6 +108,12 @@ ALTURA_CABECA_ROSTO = 1.0       # topo da cabeça acima do centro do rosto
 ALTURA_TRONCO_ROSTO = 3.0       # tronco abaixo do centro do rosto
 TOLERANCIA_BORDA_PX = 2         # crop colado na borda da fonte conta como ok
 
+# Dois "lados" so viram duas PESSOAS quando ficam mais afastados que a soma
+# dos meios-ombros e tem rostos de tamanho plausivel entre si. Sem isso, um
+# rosto espurio a poucos decimos do falante virava lado B e o split screen
+# mostrava a MESMA pessoa nos dois paineis.
+RAZAO_MINIMA_ROSTOS = 0.45
+
 # Cache da análise visual (cenas + rostos) por clipe.
 # Chave: (caminho absoluto, tamanho, mtime, perfil). Evita refazer toda a
 # análise em retry de validação e retomada de checkpoint.
@@ -1071,6 +1077,21 @@ def _filtrar_rostos_na_zona_de_cabeca(rostos: list) -> tuple:
     )
 
 
+def _sao_pessoas_distintas(clusters: list, mediana) -> bool:
+    """Confere se os dois lados sao mesmo duas pessoas, e nao a mesma duas vezes."""
+    xa, xb = mediana(clusters[0], 0), mediana(clusters[1], 0)
+    ta, tb = mediana(clusters[0], 2), mediana(clusters[1], 2)
+    if ta <= 0 or tb <= 0:
+        return True  # sem tamanho confiavel, mantem o comportamento anterior
+
+    maior, menor = max(ta, tb), min(ta, tb)
+    if menor / maior < RAZAO_MINIMA_ROSTOS:
+        return False
+
+    separacao_minima = LARGURA_OMBROS_ROSTO / 2.0 * (ta + tb)
+    return abs(xb - xa) >= separacao_minima
+
+
 def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None, posicoes_w: list = None) -> dict:
     """
     Agrupa posições X (e Y) de rostos de uma cena em 0, 1 ou 2 grupos.
@@ -1131,6 +1152,17 @@ def _agrupar_posicoes_cena(posicoes_x: list, posicoes_y: list = None, posicoes_w
         centro = _mediana(clusters[0], 0)
         centro_y = float(np.clip(_mediana(clusters[0], 1), 0.15, 0.55))
         tam = _mediana(clusters[0], 2)
+        return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
+                "lado_a_y": centro_y, "lado_b_y": centro_y,
+                "lado_a_tam": tam, "lado_b_tam": tam}
+
+    if not _sao_pessoas_distintas(clusters, _mediana):
+        # Lados sobrepostos ou rostos de tamanhos incompativeis: e uma pessoa
+        # so, vista com uma deteccao espuria ao lado.
+        principal = max(clusters, key=len)
+        centro = _mediana(principal, 0)
+        centro_y = float(np.clip(_mediana(principal, 1), 0.15, 0.55))
+        tam = _mediana(principal, 2)
         return {"n_pessoas": 1, "lado_a": centro, "lado_b": centro,
                 "lado_a_y": centro_y, "lado_b_y": centro_y,
                 "lado_a_tam": tam, "lado_b_tam": tam}

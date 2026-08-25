@@ -183,3 +183,36 @@ def test_resume_keeps_review_clips_out_of_ready_count(tmp_path, monkeypatch):
 
     assert inventario["em_revisao"] == [1]
     assert inventario["prontos"] == []
+
+
+def test_spurious_second_face_does_not_become_side_b():
+    """Rosto espurio ao lado do falante nao vira 'lado B' (caso real Papo Reto)."""
+    # Medido no clipe 08: A em 0.495 (rosto 0.168) e B em 0.714 (rosto 0.0905).
+    xs = [0.49, 0.495, 0.50, 0.71, 0.714, 0.72]
+    ys = [0.31, 0.31, 0.31, 0.33, 0.33, 0.33]
+    ws = [0.168, 0.168, 0.168, 0.0905, 0.0905, 0.0905]
+
+    grupo = enq._agrupar_posicoes_cena(xs, ys, ws)
+
+    assert grupo["n_pessoas"] == 1
+    assert grupo["lado_a"] == grupo["lado_b"]
+
+
+def test_two_real_people_are_still_detected_as_two():
+    xs = [0.22, 0.23, 0.24, 0.74, 0.75, 0.76]
+    ys = [0.45] * 6
+    ws = [0.07] * 6
+
+    grupo = enq._agrupar_posicoes_cena(xs, ys, ws)
+
+    assert grupo["n_pessoas"] == 2
+    assert grupo["lado_a"] < grupo["lado_b"]
+
+
+def test_incompatible_face_sizes_are_not_two_people():
+    """Rosto do fundo (bem menor) nao vira o segundo painel do split."""
+    xs = [0.30, 0.31, 0.32, 0.80, 0.81, 0.82]
+    ys = [0.45] * 6
+    ws = [0.10, 0.10, 0.10, 0.025, 0.025, 0.025]
+
+    assert enq._agrupar_posicoes_cena(xs, ys, ws)["n_pessoas"] == 1
