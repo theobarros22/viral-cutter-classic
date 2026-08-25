@@ -39,7 +39,7 @@ import numpy as np
 import subprocess
 import json
 import os
-from ffmpeg_utils import argumentos_encoder
+from ffmpeg_utils import argumentos_encoder, localizar_ffmpeg, obter_info_video
 
 
 # ── Configurações ─────────────────────────────────────────────────────────────
@@ -90,6 +90,17 @@ POSICAO_ROSTO_QUADRO = 0.40  # rosto a 40% do topo do quadro (regra dos terços)
 # centro. Sem essa folga, o centro correto ainda produz um rosto cortado nas
 # bordas do clipe vertical.
 FOLGA_HORIZONTAL_ROSTO = 2.8  # largura mínima do crop em relação ao rosto
+
+# ── Enquadramento seguro (regra definitiva) ───────────────────────────────────
+# Nenhum clipe é concluído com a pessoa principal fora do quadro ou encostada
+# na borda. A caixa humana é estimada a partir do rosto detectado e precisa
+# caber no crop com margem livre nas quatro bordas.
+MARGEM_SEGURA_BORDA = 0.035     # 3.5% do lado do crop livre em cada borda
+LARGURA_OMBROS_ROSTO = 2.4      # vão dos ombros ≈ 2.4x a largura do rosto
+ALTURA_ROSTO_SOBRE_LARGURA = 1.3  # rosto é mais alto que largo
+ALTURA_CABECA_ROSTO = 1.0       # topo da cabeça acima do centro do rosto
+ALTURA_TRONCO_ROSTO = 3.0       # tronco abaixo do centro do rosto
+TOLERANCIA_BORDA_PX = 2         # crop colado na borda da fonte conta como ok
 
 # Cache da análise visual (cenas + rostos) por clipe.
 # Chave: (caminho absoluto, tamanho, mtime, perfil). Evita refazer toda a
@@ -173,9 +184,111 @@ def _calcular_crop_seguro(
     return x, y, crop_w, crop_h
 
 
-def _compor_fallback_split(frame, saida_w: int, saida_h: int):
-    """Preenche 9:16 com dois painéis horizontais, sem fundo desfocado."""
-    altura, largura = frame.shape[:2]
+def _caixa_humana(alvo, largura: int, altura: int):
+    """Estima a caixa da pessoa (cabeça + ombros + tronco) a partir do rosto.
+
+    Retorna (x0, y0, x1, y1) em pixels, já limitada ao quadro original, ou
+    None quando o alvo não tem tamanho de rosto confiável.
+    """
+    try:
+        tam = float(alvo[2])
+    except (TypeError, IndexError, ValueError):
+        return None
+    if tam < MIN_TAMANHO_ROSTO:
+        return None
+
+    cx = float(alvo[0]) * largura
+    cy = float(alvo[1]) * altura
+    rosto_w = tam * largura
+    rosto_h = rosto_w * ALTURA_ROSTO_SOBRE_LARGURA
+
+    x0 = cx - rosto_w * LARGURA_OMBROS_ROSTO / 2.0
+    x1 = cx + rosto_w * LARGURA_OMBROS_ROSTO / 2.0
+    y0 = cy - rosto_h * ALTURA_CABECA_ROSTO
+    y1 = cy + rosto_h * ALTURA_TRONCO_ROSTO
+
+    return (
+        max(0.0, min(float(largura), x0)),
+        max(0.0, min(float(altura), y0)),
+        max(0.0, min(float(largura), x1)),
+        max(0.0, min(float(altura), y1)),
+    )
+
+
+def _caixas_humanas(alvos: list, largura: int, altura: int) -> list:
+    """Caixas humanas válidas dos alvos informados (descarta rostos duvidosos)."""
+    caixas = [_caixa_humana(a, largura, altura) for a in (alvos or [])]
+    return [c for c in caixas if c is not None]
+
+
+def _validar_crop_alvos(crop, caixas: list, largura: int, altura: int) -> tuple:
+    """Verifica se o crop contém as pessoas com margem segura nas bordas.
+
+    Uma pessoa que já está encostada na borda da FONTE só é aceita quando o
+    crop também encosta naquela borda — assim nada é cortado além do que o
+    vídeo original já cortava.
+    """
+    if not caixas:
+        return False, "sem_alvo_valido"
+
+    x, y, w, h = crop
+    margem_x = MARGEM_SEGURA_BORDA * w
+    margem_y = MARGEM_SEGURA_BORDA * h
+
+    for x0, y0, x1, y1 in caixas:
+        if (x1 - x0) + 2 * margem_x > w or (y1 - y0) + 2 * margem_y > h:
+            return False, "pessoa_maior_que_o_quadro"
+        if x0 < x + margem_x and x > TOLERANCIA_BORDA_PX:
+            return False, "pessoa_cortada_na_esquerda"
+        if x1 > x + w - margem_x and (x + w) < largura - TOLERANCIA_BORDA_PX:
+            return False, "pessoa_cortada_na_direita"
+        if y0 < y + margem_y and y > TOLERANCIA_BORDA_PX:
+            return False, "cabeca_cortada_no_topo"
+        if y1 > y + h - margem_y and (y + h) < altura - TOLERANCIA_BORDA_PX:
+            return False, "corpo_cortado_embaixo"
+    return True, ""
+
+
+def _ajustar_crop_para_caixas(crop, caixas: list, largura: int, altura: int):
+    """Desloca o crop (sem mudar o tamanho) para cobrir as caixas humanas."""
+    if not caixas:
+        return crop
+    x, y, w, h = crop
+    margem_x = MARGEM_SEGURA_BORDA * w
+    margem_y = MARGEM_SEGURA_BORDA * h
+
+    alvo_x0 = min(c[0] for c in caixas) - margem_x
+    alvo_x1 = max(c[2] for c in caixas) + margem_x
+    alvo_y0 = min(c[1] for c in caixas) - margem_y
+    alvo_y1 = max(c[3] for c in caixas) + margem_y
+
+    if alvo_x1 - alvo_x0 <= w:
+        centro = (alvo_x0 + alvo_x1) / 2.0
+        x = int(round(centro - w / 2.0))
+    if alvo_y1 - alvo_y0 <= h:
+        centro = (alvo_y0 + alvo_y1) / 2.0
+        y = int(round(centro - h / 2.0))
+
+    x = max(0, min(largura - w, x))
+    y = max(0, min(altura - h, y))
+    return (x, y, w, h)
+
+
+def _crop_validado(alvos: list, largura: int, altura: int, proporcao: float) -> tuple:
+    """Crop conservador já corrigido e validado. Retorna (crop, ok, motivo)."""
+    crop = _calcular_crop_seguro(alvos, largura, altura, proporcao)
+    caixas = _caixas_humanas(alvos, largura, altura)
+    if not caixas:
+        # Sem rosto confiável: mantém o crop central, mas sinaliza que a cena
+        # não tem foco humano validado (B-roll ou detecção fraca).
+        return crop, False, "sem_alvo_valido"
+    crop = _ajustar_crop_para_caixas(crop, caixas, largura, altura)
+    ok, motivo = _validar_crop_alvos(crop, caixas, largura, altura)
+    return crop, ok, motivo
+
+
+def _geometria_fallback_split(largura: int, altura: int, saida_w: int, saida_h: int) -> dict:
+    """Dois painéis horizontais empilhados preenchendo todo o 9:16, sem blur."""
     topo_h = saida_h // 2
     base_h = saida_h - topo_h
 
@@ -187,47 +300,48 @@ def _compor_fallback_split(frame, saida_w: int, saida_h: int):
         crop_w = max(2, crop_w - crop_w % 2)
         x = max(0, min(largura - crop_w, esquerda))
         y = max(0, (altura - crop_h) // 2)
-        recorte = frame[y:y + crop_h, x:x + crop_w]
-        return cv2.resize(recorte, (saida_w, destino_h), interpolation=INTERPOLACAO_EXPORT)
+        return (x, y, crop_w, crop_h)
 
-    topo = painel(topo_h, 0)
-    base = painel(base_h, largura)
-    return np.vstack((topo, base))
+    return {
+        "tipo": "split",
+        "modo_final": "FALLBACK_SPLIT",
+        "top_crop": painel(topo_h, 0),
+        "top_scale": (saida_w, topo_h),
+        "bot_crop": painel(base_h, largura),
+        "bot_scale": (saida_w, base_h),
+    }
 
-def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int):
-    """Compõe SOLO/GRUPO/SPLIT com cada pessoa centralizada e quadro aberto."""
+
+def _registrar(relatorio, motivo: str, revisar: bool = False) -> None:
+    """Acumula motivos de segurança do enquadramento para o pipeline."""
+    if relatorio is None or not motivo:
+        return
+    motivos = relatorio.setdefault("motivos", [])
+    if motivo not in motivos:
+        motivos.append(motivo)
+    if revisar:
+        relatorio["revisar"] = True
+
+
+def _compor_frame_seguro(frame, plano: dict, saida_w: int, saida_h: int, relatorio: dict = None):
+    """Compõe o frame usando o MESMO layout validado do motor FFmpeg."""
     altura, largura = frame.shape[:2]
+    filtros = _calcular_filtros_shot(
+        plano, largura, altura, saida_w, saida_h, relatorio=relatorio
+    )
 
-    def painel(alvos, destino_w, destino_h):
-        x, y, w, h = _calcular_crop_seguro(
-            alvos, largura, altura, destino_w / float(destino_h)
-        )
-        recorte = frame[y:y + h, x:x + w]
+    def recortar(crop, escala):
+        x, y, w, h = crop
         return cv2.resize(
-            recorte, (destino_w, destino_h), interpolation=INTERPOLACAO_EXPORT
+            frame[y:y + h, x:x + w], escala, interpolation=INTERPOLACAO_EXPORT
         )
 
-    modo = plano.get("modo", "SOLO_A")
-    if modo == "FALLBACK_SPLIT":
-        return _compor_fallback_split(frame, saida_w, saida_h)
-    alvo_a = (
-        float(plano["xa"]), float(plano.get("ya", 0.40)),
-        float(plano.get("ta", 0.0)),
-    )
-    alvo_b = (
-        float(plano.get("xb", plano["xa"])), float(plano.get("yb", 0.40)),
-        float(plano.get("tb", plano.get("ta", 0.0))),
-    )
+    if filtros["tipo"] == "solo":
+        return recortar(filtros["crop"], filtros["scale"])
 
-    if modo == "SPLIT":
-        topo_h = saida_h // 2
-        base_h = saida_h - topo_h
-        topo = painel([alvo_a], saida_w, topo_h)
-        base = painel([alvo_b], saida_w, base_h)
-        return np.vstack((topo, base))
-    if modo == "GRUPO":
-        return painel([alvo_a, alvo_b], saida_w, saida_h)
-    return painel([alvo_a], saida_w, saida_h)
+    topo = recortar(filtros["top_crop"], filtros["top_scale"])
+    base = recortar(filtros["bot_crop"], filtros["bot_scale"])
+    return np.vstack((topo, base))
 
 
 def aplicar_enquadramento(
@@ -237,13 +351,21 @@ def aplicar_enquadramento(
     pessoas_priorizadas: list = None,
     qualidade: str = "1080p",
     perfil: str = "equilibrado",
+    relatorio: dict = None,
 ) -> bool:
     """
     Aplica enquadramento 9:16 ciente dos cortes de cena.
 
-    Assinatura idêntica à versão anterior — o pipeline.py não muda.
+    `relatorio` (opcional) é preenchido com o resultado da validação de
+    enquadramento seguro: {"revisar": bool, "motivos": [...]}. Quando
+    `revisar` volta True, a pessoa principal não coube com margem segura em
+    NENHUM modo e o clipe não deve ser considerado concluído.
     """
     saida_w, saida_h = RESOLUCOES.get(qualidade, (1080, 1920))
+    if relatorio is None:
+        relatorio = {}
+    relatorio.setdefault("revisar", False)
+    relatorio.setdefault("motivos", [])
 
     info = _obter_info_video(caminho_entrada)
     largura = info["largura"]
@@ -308,20 +430,35 @@ def aplicar_enquadramento(
         print(f"   🚀 Renderizando {total_frames} frames ({len(segmentos)} bloco(s) estáveis) via FFmpeg nativo...")
         sucesso_ffmpeg = _renderizar_enquadramento_ffmpeg(
             caminho_entrada, caminho_saida, segmentos, largura, altura,
-            saida_w, saida_h, perfil=perfil
+            saida_w, saida_h, perfil=perfil, relatorio=relatorio
         )
         if sucesso_ffmpeg and os.path.isfile(caminho_saida) and os.path.getsize(caminho_saida) > 1000:
-            print("   ✅ Enquadramento concluído com sucesso!")
+            _reportar_seguranca(relatorio)
             return True
         print("   ⚠️ Grafo FFmpeg indisponível/falhou. Acionando fallback frame a frame seguro...")
     else:
         print("   ℹ️ Transições complexas detectadas. Usando renderizador seguro por pipe...")
 
     # Fallback seguro frame a frame via pipe
-    return _renderizar_enquadramento_pipe(
+    sucesso = _renderizar_enquadramento_pipe(
         caminho_entrada, caminho_saida, plano, largura, altura, fps,
-        saida_w, saida_h, total_frames, perfil=perfil
+        saida_w, saida_h, total_frames, perfil=perfil, relatorio=relatorio
     )
+    if sucesso:
+        _reportar_seguranca(relatorio)
+    return sucesso
+
+
+def _reportar_seguranca(relatorio: dict) -> None:
+    """Imprime o resultado da validação de enquadramento seguro."""
+    motivos = relatorio.get("motivos") or []
+    if relatorio.get("revisar"):
+        print(f"   ⚠️ Enquadramento marcado para REVISAR: {', '.join(motivos)}")
+        return
+    if motivos:
+        print(f"   ✅ Enquadramento concluído (ajustes: {', '.join(motivos)}).")
+    else:
+        print("   ✅ Enquadramento concluído com sucesso!")
 
 
 def _agrupar_planos_em_segmentos(plano: list, fps: float) -> list:
@@ -368,8 +505,20 @@ def _agrupar_planos_em_segmentos(plano: list, fps: float) -> list:
     return segmentos
 
 
-def _calcular_filtros_shot(plano: dict, largura: int, altura: int, saida_w: int, saida_h: int):
-    """Calcula os parâmetros exatos de corte/escala para um shot sem alterar matemática."""
+def _calcular_filtros_shot(
+    plano: dict,
+    largura: int,
+    altura: int,
+    saida_w: int,
+    saida_h: int,
+    relatorio: dict = None,
+):
+    """Resolve o layout do shot já VALIDADO contra corte de pessoa.
+
+    Fonte única de verdade para os dois motores (grafo FFmpeg e pipe frame a
+    frame). Degrada em cascata: modo pedido → SPLIT → dois painéis horizontais.
+    Se nenhum modo for seguro, marca o clipe para revisão.
+    """
     modo = plano.get("modo", "SOLO_A")
     alvo_a = (
         float(plano.get("xa", 0.5)),
@@ -382,64 +531,111 @@ def _calcular_filtros_shot(plano: dict, largura: int, altura: int, saida_w: int,
         float(plano.get("tb", plano.get("ta", 0.0))),
     )
 
-    if modo in ("SOLO_A", "SOLO_B"):
-        alvo = alvo_a if modo == "SOLO_A" else alvo_b
-        x, y, w, h = _calcular_crop_seguro([alvo], largura, altura, saida_w / float(saida_h))
-        return {"tipo": "solo", "crop": (x, y, w, h), "scale": (saida_w, saida_h)}
+    def _solo(alvos, rotulo):
+        crop, ok, motivo = _crop_validado(
+            alvos, largura, altura, saida_w / float(saida_h)
+        )
+        layout = {
+            "tipo": "solo",
+            "modo_final": rotulo,
+            "crop": crop,
+            "scale": (saida_w, saida_h),
+        }
+        return layout, ok, motivo
 
-    if modo == "GRUPO":
-        x, y, w, h = _calcular_crop_seguro([alvo_a, alvo_b], largura, altura, saida_w / float(saida_h))
-        return {"tipo": "solo", "crop": (x, y, w, h), "scale": (saida_w, saida_h)}
-
-    if modo == "SPLIT":
+    def _split():
         topo_h = saida_h // 2
         base_h = saida_h - topo_h
-        xa, ya, wa, ha = _calcular_crop_seguro([alvo_a], largura, altura, saida_w / float(topo_h))
-        xb, yb, wb, hb = _calcular_crop_seguro([alvo_b], largura, altura, saida_w / float(base_h))
-        return {
+        crop_a, ok_a, motivo_a = _crop_validado(
+            [alvo_a], largura, altura, saida_w / float(topo_h)
+        )
+        crop_b, ok_b, motivo_b = _crop_validado(
+            [alvo_b], largura, altura, saida_w / float(base_h)
+        )
+        layout = {
             "tipo": "split",
-            "top_crop": (xa, ya, wa, ha),
+            "modo_final": "SPLIT",
+            "top_crop": crop_a,
             "top_scale": (saida_w, topo_h),
-            "bot_crop": (xb, yb, wb, hb),
+            "bot_crop": crop_b,
             "bot_scale": (saida_w, base_h),
         }
+        return layout, (ok_a and ok_b), (motivo_a or motivo_b)
 
-    # FALLBACK_SPLIT
-    topo_h = saida_h // 2
-    base_h = saida_h - topo_h
-    prop_top = saida_w / float(topo_h)
-    crop_h_top = min(altura, int(round(largura / prop_top)))
-    crop_h_top = max(2, crop_h_top - crop_h_top % 2)
-    crop_w_top = min(largura, int(round(crop_h_top * prop_top)))
-    crop_w_top = max(2, crop_w_top - crop_w_top % 2)
-    x_top = max(0, min(largura - crop_w_top, 0))
-    y_top = max(0, (altura - crop_h_top) // 2)
+    def _fallback():
+        layout = _geometria_fallback_split(largura, altura, saida_w, saida_h)
+        caixas = _caixas_humanas([alvo_a, alvo_b], largura, altura)
+        if not caixas:
+            # Sem gente detectada: os dois painéis cobrem a largura inteira,
+            # então não há o que cortar — é B-roll, não é falha.
+            return layout, True, ""
+        # Basta a pessoa caber INTEIRA em um dos painéis para o quadro ser seguro.
+        for caixa in caixas:
+            seguro = any(
+                _validar_crop_alvos(layout[chave], [caixa], largura, altura)[0]
+                for chave in ("top_crop", "bot_crop")
+            )
+            if not seguro:
+                return layout, False, "sem_modo_seguro"
+        return layout, True, ""
 
-    prop_bot = saida_w / float(base_h)
-    crop_h_bot = min(altura, int(round(largura / prop_bot)))
-    crop_h_bot = max(2, crop_h_bot - crop_h_bot % 2)
-    crop_w_bot = min(largura, int(round(crop_h_bot * prop_bot)))
-    crop_w_bot = max(2, crop_w_bot - crop_w_bot % 2)
-    x_bot = max(0, min(largura - crop_w_bot, largura))
-    y_bot = max(0, (altura - crop_h_bot) // 2)
+    if modo == "FALLBACK_SPLIT":
+        layout, ok, motivo = _fallback()
+        if not ok:
+            _registrar(relatorio, motivo, revisar=True)
+        return layout
 
-    return {
-        "tipo": "split",
-        "top_crop": (x_top, y_top, crop_w_top, crop_h_top),
-        "top_scale": (saida_w, topo_h),
-        "bot_crop": (x_bot, y_bot, crop_w_bot, crop_h_bot),
-        "bot_scale": (saida_w, base_h),
-    }
+    if modo in ("SOLO_A", "SOLO_B"):
+        layout, ok, motivo = _solo(
+            [alvo_a if modo == "SOLO_A" else alvo_b], modo
+        )
+    elif modo == "GRUPO":
+        layout, ok, motivo = _solo([alvo_a, alvo_b], "GRUPO")
+    elif modo == "SPLIT":
+        layout, ok, motivo = _split()
+    else:
+        layout, ok, motivo = _solo([alvo_a], "SOLO_A")
+
+    if ok:
+        return layout
+
+    # Cena sem rosto confiável: o crop central segue válido (B-roll / herança).
+    if motivo == "sem_alvo_valido":
+        _registrar(relatorio, "cena_sem_rosto_confiavel")
+        return layout
+
+    _registrar(relatorio, motivo)
+
+    # SPLIT só faz sentido com duas pessoas distintas — com um alvo só ele
+    # duplicaria a mesma pessoa nos dois painéis.
+    tem_dois_alvos = (
+        len(_caixas_humanas([alvo_a, alvo_b], largura, altura)) == 2
+        and abs(alvo_a[0] - alvo_b[0]) > 0.02
+    )
+    if modo != "SPLIT" and tem_dois_alvos:
+        layout_split, ok_split, motivo_split = _split()
+        if ok_split:
+            _registrar(relatorio, "degradado_para_split")
+            return layout_split
+        motivo = motivo_split or motivo
+
+    layout_fb, ok_fb, motivo_fb = _fallback()
+    if ok_fb:
+        _registrar(relatorio, "degradado_para_paineis_horizontais")
+        return layout_fb
+
+    _registrar(relatorio, motivo_fb or motivo or "sem_modo_seguro", revisar=True)
+    return layout_fb
 
 
-def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, saida_w: int, saida_h: int) -> str:
+def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, saida_w: int, saida_h: int, relatorio: dict = None) -> str:
     """Monta o filter_complex completo otimizado para o FFmpeg."""
     n_seg = len(segmentos)
     if n_seg == 0:
         return ""
 
     if n_seg == 1:
-        shot = _calcular_filtros_shot(segmentos[0]["plano"], largura, altura, saida_w, saida_h)
+        shot = _calcular_filtros_shot(segmentos[0]["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio)
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
             sw, sh = shot["scale"]
@@ -463,7 +659,7 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
     for k, seg in enumerate(segmentos):
         start_s = seg["start_s"]
         end_s = seg["end_s"]
-        shot = _calcular_filtros_shot(seg["plano"], largura, altura, saida_w, saida_h)
+        shot = _calcular_filtros_shot(seg["plano"], largura, altura, saida_w, saida_h, relatorio=relatorio)
 
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
@@ -504,17 +700,18 @@ def _renderizar_enquadramento_ffmpeg(
     saida_w: int,
     saida_h: int,
     perfil: str = "equilibrado",
+    relatorio: dict = None,
 ) -> bool:
     """Renderiza diretamente pelo FFmpeg filter_complex acelerado por hardware."""
     try:
         filtro_complexo = _construir_grafo_enquadramento(
-            segmentos, largura, altura, saida_w, saida_h
+            segmentos, largura, altura, saida_w, saida_h, relatorio=relatorio
         )
         if not filtro_complexo:
             return False
 
         cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
+            localizar_ffmpeg(), "-y", "-loglevel", "error",
             "-i", caminho_entrada,
             "-filter_complex", filtro_complexo,
             "-map", "[vout]", "-map", "0:a?",
@@ -559,6 +756,7 @@ def _renderizar_enquadramento_pipe(
     saida_h: int,
     total_frames: int,
     perfil: str = "equilibrado",
+    relatorio: dict = None,
 ) -> bool:
     """Fallback: processamento frame a frame em Python conectado por pipe ao FFmpeg."""
     cap = cv2.VideoCapture(caminho_entrada)
@@ -568,7 +766,7 @@ def _renderizar_enquadramento_pipe(
         return False
 
     cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
+        localizar_ffmpeg(), "-y", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "bgr24",
         "-s", f"{saida_w}x{saida_h}", "-r", str(fps), "-i", "-",
         "-i", caminho_entrada,
@@ -613,7 +811,7 @@ def _renderizar_enquadramento_pipe(
         else:
             p = plano[-1] if plano else {"modo": "CENTRAL", "xa": 0.5, "xb": 0.5}
 
-        frame_final = _compor_frame_seguro(frame, p, saida_w, saida_h)
+        frame_final = _compor_frame_seguro(frame, p, saida_w, saida_h, relatorio=relatorio)
 
         try:
             processo_ffmpeg.stdin.write(frame_final.tobytes())
@@ -1074,22 +1272,5 @@ def _recortar_com_margem(
 
 
 def _obter_info_video(caminho_video: str) -> dict:
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_streams", "-select_streams", "v:0", caminho_video
-    ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if resultado.returncode != 0 or not resultado.stdout.strip():
-        raise RuntimeError("FFprobe não conseguiu ler as informações do vídeo.")
-    dados = json.loads(resultado.stdout)
-    stream = dados["streams"][0]
-    fps_str = stream.get("r_frame_rate", "30/1")
-    num, den = fps_str.split("/")
-    den = int(den)
-    fps = round(int(num) / den, 2) if den else 30.0
-    return {
-        "largura": int(stream["width"]),
-        "altura":  int(stream["height"]),
-        "fps":     fps,
-    }
+    return obter_info_video(caminho_video)
 # fim do arquivo — enquadramento por cena v2

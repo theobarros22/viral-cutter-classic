@@ -95,16 +95,9 @@ _FFPROBE_TIMEOUT = 30  # segundos
 # â”€â”€ ValidaÃ§Ã£o FFprobe â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _localizar_ffprobe() -> str:
-    """Retorna o caminho do ffprobe ou 'ffprobe' para usar o PATH."""
-    import shutil as _sh
-    for cand in [
-        _sh.which("ffprobe"),
-        r"D:\CORTE VIRAL\files\tools\ffprobe.exe",
-        r"D:\CORTE VIRAL\tools\ffprobe.exe",
-    ]:
-        if cand and os.path.exists(cand):
-            return cand
-    return "ffprobe"
+    """Retorna o caminho do ffprobe usando resolução unificada."""
+    from ffmpeg_utils import localizar_ffprobe
+    return localizar_ffprobe()
 
 
 def validar_midia_ffprobe(
@@ -889,9 +882,11 @@ def etapa3_processar(
             publicar_progresso(i, "enquadramento")
             log(f"   [{i}/{total}] Enquadrando...")
             inicio_enquadramento = time.monotonic()
+            relatorio_enq = {}
             sucesso = aplicar_enquadramento(
                 caminho_temp, caminho_final, posicoes,
-                pessoas_priorizadas_ids, qualidade=qualidade, perfil=perfil
+                pessoas_priorizadas_ids, qualidade=qualidade, perfil=perfil,
+                relatorio=relatorio_enq
             )
             tempo_enquadramento = time.monotonic() - inicio_enquadramento
             if not sucesso or not os.path.isfile(caminho_final):
@@ -933,9 +928,11 @@ def etapa3_processar(
                     # esperada volta a ser a do segmento puro. Sem este ajuste,
                     # a validaÃ§Ã£o do retry rejeitava clipes corretos.
                     _dur_esperada_retry = seg["fim"] - seg["inicio"]
+                relatorio_enq = {}
                 _sucesso_retry = aplicar_enquadramento(
                     caminho_temp, caminho_final, posicoes,
-                    pessoas_priorizadas_ids, qualidade=qualidade, perfil=perfil
+                    pessoas_priorizadas_ids, qualidade=qualidade, perfil=perfil,
+                    relatorio=relatorio_enq
                 )
                 if not _sucesso_retry or not os.path.isfile(caminho_final):
                     log(f"   [{i}/{total}] âŒ Retry: falha no enquadramento.")
@@ -975,9 +972,21 @@ def etapa3_processar(
                     f"{_val['width']}x{_val['height']} | {_val['video_codec']}"
                 )
 
+            # Enquadramento seguro: sem modo seguro o clipe NAO conta como
+            # concluido - vai para revisao manual com o motivo registrado.
+            precisa_revisao = bool(relatorio_enq.get("revisar"))
+            motivos_revisao = list(relatorio_enq.get("motivos") or [])
+            if precisa_revisao:
+                log(
+                    f"   [{i}/{total}] REVISAR enquadramento: "
+                    f"{', '.join(motivos_revisao)}"
+                )
+
             resultado = {
                 "titulo": seg.get("titulo"),
                 "arquivo": caminho_final,
+                "revisar": precisa_revisao,
+                "motivos_revisao": motivos_revisao,
                 "score_viral": seg.get("score_viral", 0),
                 "resumo": seg.get("resumo", ""),
                 "duracao": round(seg["fim"] - seg["inicio"], 1),
@@ -994,18 +1003,20 @@ def etapa3_processar(
                 },
             }
             resultados_por_indice[i] = resultado
-            novos_concluidos += 1
+            if not precisa_revisao:
+                novos_concluidos += 1
             concluidos_total = len(resultados_por_indice)
             percentual = concluidos_total / total * 100
             decorrido = time.monotonic() - inicio_sessao
             amostras_tempo.append(time.monotonic() - inicio_corte)
             checkpoint["clipes"][str(i)] = {
-                "status": "concluido",
-                "etapa": "concluido",
+                "status": "revisar" if precisa_revisao else "concluido",
+                "etapa": "revisar" if precisa_revisao else "concluido",
                 "resultado": resultado,
+                "motivos_revisao": motivos_revisao,
             }
             checkpoint["ultimo_erro"] = None
-            evento = publicar_progresso(i, "concluido")
+            evento = publicar_progresso(i, "revisar" if precisa_revisao else "concluido")
             log(f"   Salvo: {nome_arquivo}")
             log(
                 f"   Tempos: corte {formatar_tempo(tempo_corte)} | "
@@ -1047,7 +1058,14 @@ def etapa3_processar(
     checkpoint["estimativa_segundos"] = 0
     checkpoint["ultimo_erro"] = None
     salvar_checkpoint(arquivo_checkpoint, checkpoint)
-    log(f"Concluido! {len(resultados)} clipes em: {pasta_saida}")
+    em_revisao = [r for r in resultados if r.get("revisar")]
+    prontos = len(resultados) - len(em_revisao)
+    log(f"Concluido! {prontos} clipe(s) prontos em: {pasta_saida}")
+    if em_revisao:
+        log(f"{len(em_revisao)} clipe(s) marcados para REVISAR (enquadramento):")
+        for r in em_revisao:
+            log(f"   - {os.path.basename(r['arquivo'])}: "
+                f"{', '.join(r.get('motivos_revisao') or ['sem_modo_seguro'])}")
     return resultados
 
 
@@ -1172,18 +1190,9 @@ def etapa4_efeitos_virais(
         log(f"âŒ CoreEngine nÃ£o encontrado: {e}")
         return resultados
 
-    # â”€â”€ Localiza FFmpeg â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    import shutil as _shutil
-    _ffmpeg = None
-    for _cand in [
-        _shutil.which("ffmpeg"),
-        r"D:\CORTE VIRAL\files\tools\ffmpeg.exe",
-        r"D:\CORTE VIRAL\tools\ffmpeg.exe",
-    ]:
-        if _cand and os.path.exists(_cand):
-            _ffmpeg = _cand
-            break
-    _ffmpeg = _ffmpeg or "ffmpeg"
+    # ── Localiza FFmpeg ──────────────────────────────────────────────────────────
+    from ffmpeg_utils import localizar_ffmpeg
+    _ffmpeg = localizar_ffmpeg()
 
     if pasta_sfx is None:
         pasta_sfx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "sfx")

@@ -24,7 +24,7 @@ from enquadramento import (
     _calcular_x_crop,
     _calcular_crop_seguro,
     _classificar_modos_fala,
-    _compor_fallback_split,
+    _compor_frame_seguro,
     _compor_frame_seguro,
     _filtrar_rostos_na_zona_de_cabeca,
     _gerar_plano,
@@ -438,7 +438,7 @@ class TestCore(unittest.TestCase):
         frame[:, :320] = (0, 0, 220)
         frame[:, 320:] = (220, 0, 0)
 
-        saida = _compor_fallback_split(frame, 360, 640)
+        saida = _compor_frame_seguro(frame, {"modo": "FALLBACK_SPLIT"}, 360, 640)
 
         self.assertEqual(saida.shape, (640, 360, 3))
         self.assertGreater(saida[:320].mean(), 0)

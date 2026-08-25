@@ -89,12 +89,21 @@ class TestFastExportEngine(unittest.TestCase):
         self.assertEqual(shot_split["top_scale"], (1080, 960))
         self.assertEqual(shot_split["bot_scale"], (1080, 960))
 
-        # GRUPO
+        # GRUPO com pessoas afastadas nao cabe num crop 9:16 unico: a regra de
+        # enquadramento seguro degrada para os dois paineis empilhados em vez
+        # de entregar um crop que corta as duas pessoas.
         shot_grupo = _calcular_filtros_shot(
             {"modo": "GRUPO", "xa": 0.3, "ya": 0.4, "ta": 0.1, "xb": 0.7, "yb": 0.4, "tb": 0.1},
             largura, altura, saida_w, saida_h
         )
-        self.assertEqual(shot_grupo["tipo"], "solo")
+        self.assertEqual(shot_grupo["tipo"], "split")
+
+        # GRUPO com pessoas proximas continua cabendo num crop unico.
+        shot_grupo_junto = _calcular_filtros_shot(
+            {"modo": "GRUPO", "xa": 0.46, "ya": 0.4, "ta": 0.05, "xb": 0.54, "yb": 0.4, "tb": 0.05},
+            largura, altura, saida_w, saida_h
+        )
+        self.assertEqual(shot_grupo_junto["tipo"], "solo")
 
     def test_construir_grafo_enquadramento_sintaxe(self):
         largura, altura = 1920, 1080
