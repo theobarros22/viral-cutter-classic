@@ -15,9 +15,9 @@ Se o WebView2 nao estiver disponivel na maquina, o app avisa e cai para o
 navegador, em vez de simplesmente nao abrir.
 """
 
+import logging
 import os
 import sys
-import threading
 import time
 
 import runtime
@@ -91,27 +91,26 @@ def iniciar_servidor_gradio():
     porta = escolher_porta()
     registrar_status(porta, "iniciando")
 
-    def servir():
-        app.launch(
-            server_name="127.0.0.1",
-            server_port=porta,
-            css=interface.CSS,
-            head=interface.HEAD,
-            inbrowser=False,          # a janela nativa e quem exibe
-            share=False,
-            quiet=True,
-            prevent_thread_lock=True,
-            allowed_paths=[
-                pasta_export,
-                interface.PASTA_BASE,
-                runtime.pasta_dados(),
-                os.path.expanduser("~"),
-                "D:\\",
-            ],
-        )
-
-    thread = threading.Thread(target=servir, daemon=True)
-    thread.start()
+    # `prevent_thread_lock=True` ja faz o Gradio servir numa thread propria e
+    # devolver o controle. Envolver isso numa thread nossa quebrava o start no
+    # executavel: o launch comecava (telemetria no log) e morria em silencio.
+    app.launch(
+        server_name="127.0.0.1",
+        server_port=porta,
+        css=interface.CSS,
+        head=interface.HEAD,
+        inbrowser=False,          # a janela nativa e quem exibe
+        share=False,
+        quiet=True,
+        prevent_thread_lock=True,
+        allowed_paths=[
+            pasta_export,
+            interface.PASTA_BASE,
+            runtime.pasta_dados(),
+            os.path.expanduser("~"),
+            "D:\\",
+        ],
+    )
     return porta, app
 
 
@@ -173,4 +172,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # No executavel empacotado (console=False) nao existe stdout: sem este
+    # registro, qualquer falha de inicializacao some sem deixar rastro.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException:
+        logging.getLogger("ViralCutter").critical(
+            "Falha ao iniciar a janela", exc_info=True
+        )
+        raise
