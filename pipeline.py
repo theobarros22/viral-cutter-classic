@@ -775,6 +775,12 @@ def etapa3_processar(
     log("")
     log("=== Nova sessao de processamento ===")
     log(f"Video: {caminho_video}")
+    # Retomada em processo novo: pessoas/transcricao/segmentos vivem so em
+    # memoria durante a sessao. Sem reidratar, a deteccao de falante recebe
+    # lista vazia e o clipe morre com "Nenhuma pessoa validada para enquadrar".
+    _reaproveitado = restaurar_estado_analise(caminho_video)
+    if _reaproveitado:
+        log(f"Estado da analise reaproveitado do disco: {_reaproveitado}")
     log(f"Qualidade: {qualidade}")
     log(f"Perfil: {perfil}")
     checkpoint = carregar_checkpoint(arquivo_checkpoint) if retomar else None

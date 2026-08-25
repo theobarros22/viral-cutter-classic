@@ -137,3 +137,13 @@ def test_log_recovers_a_clip_when_the_checkpoint_is_gone(tmp_path, monkeypatch):
     assert inventario["concluidos"] == {1: str(arquivo)}
     assert inventario["em_revisao"] == [1]
     assert inventario["prontos"] == []
+
+
+def test_stage3_rehydrates_people_before_detecting_the_speaker(tmp_path, monkeypatch):
+    """Regressao real: retomar num processo novo deixava a lista de pessoas vazia."""
+    import inspect
+    fonte = inspect.getsource(pipeline.etapa3_processar)
+    posicao_restauracao = fonte.find("restaurar_estado_analise")
+    posicao_uso = fonte.find('_cache.get("pessoas"')
+    assert posicao_restauracao != -1, "etapa3 precisa reidratar o estado salvo"
+    assert posicao_restauracao < posicao_uso, "reidratar antes de usar as pessoas"
