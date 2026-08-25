@@ -75,3 +75,65 @@ def test_rehydrate_does_not_override_a_live_session(tmp_path, monkeypatch):
     assert pipeline.restaurar_estado_analise(video) == {}
     assert pipeline._cache["transcricao"]["texto"] == "atual"
     pipeline._cache.clear()
+
+
+def test_log_recovery_finds_saved_clips(tmp_path):
+    """Sem checkpoint, o log aponta os candidatos ja exportados."""
+    log = tmp_path / "trabalho.log"
+    log.write_text(
+        "2026-08-25T07:22:20-03:00    [1/3] Enquadrando...\n"
+        "2026-08-25T07:28:16-03:00    [1/3] Validado: 164.7s | 1080x1920 | h264\n"
+        "2026-08-25T07:28:16-03:00    Salvo: 01_primeiro.mp4\n"
+        "2026-08-25T07:32:58-03:00    [2/3] Salvo: 02_segundo.mp4\n"
+        "2026-08-25T07:33:00-03:00    [2/3] REVISAR enquadramento: pessoa_cortada_na_direita, sem_modo_seguro\n",
+        encoding="utf-8",
+    )
+
+    candidatos = ckp.recuperar_do_log(str(log), total=3)
+
+    assert candidatos[1]["arquivo"] == "01_primeiro.mp4"
+    assert candidatos[1]["revisar"] is False
+    assert candidatos[2]["revisar"] is True
+    assert "sem_modo_seguro" in candidatos[2]["motivos"]
+    assert 3 not in candidatos
+
+
+def test_log_recovery_ignores_out_of_range_and_missing_log(tmp_path):
+    log = tmp_path / "trabalho.log"
+    log.write_text("x    Salvo: 99_fora_do_intervalo.mp4\n", encoding="utf-8")
+    assert ckp.recuperar_do_log(str(log), total=3) == {}
+    assert ckp.recuperar_do_log(str(tmp_path / "nao_existe.log"), total=3) == {}
+
+
+def test_log_is_never_trusted_without_media_validation(tmp_path, monkeypatch):
+    """Clipe citado no log mas ausente na pasta continua pendente."""
+    log = tmp_path / "trabalho.log"
+    log.write_text("x    Salvo: 01_fantasma.mp4\n", encoding="utf-8")
+    segmentos = [{"inicio": 0, "fim": 10, "titulo": "a"}]
+
+    inventario = ckp.inspecionar_retomada(
+        None, str(tmp_path), segmentos, caminho_log=str(log)
+    )
+
+    assert inventario["pendentes"] == [1]
+    assert inventario["concluidos"] == {}
+
+
+def test_log_recovers_a_clip_when_the_checkpoint_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setattr(ckp, "resultado_valido", lambda r: bool(r and r.get("arquivo")))
+    arquivo = tmp_path / "01_existe.mp4"
+    arquivo.write_bytes(b"\0" * 70000)
+    log = tmp_path / "trabalho.log"
+    log.write_text(
+        "x    Salvo: 01_existe.mp4\n"
+        "x    [1/1] REVISAR enquadramento: sem_modo_seguro\n",
+        encoding="utf-8",
+    )
+
+    inventario = ckp.inspecionar_retomada(
+        None, str(tmp_path), [{"inicio": 0, "fim": 10}], caminho_log=str(log)
+    )
+
+    assert inventario["concluidos"] == {1: str(arquivo)}
+    assert inventario["em_revisao"] == [1]
+    assert inventario["prontos"] == []

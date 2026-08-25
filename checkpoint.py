@@ -1,6 +1,7 @@
 """Checkpoint recuperavel para processamentos longos do Viral Cutter."""
 
 import hashlib
+import re
 import json
 import os
 import shutil
@@ -115,18 +116,81 @@ def resultados_concluidos(dados):
     return concluidos
 
 
-def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
-    """Classifica saídas existentes sem renderizar novamente mídia válida."""
+_PADRAO_SALVO = re.compile(r"Salvo:\s*(?P<arquivo>.+?\.mp4)\s*$")
+_PADRAO_REVISAR = re.compile(r"\[(?P<indice>\d+)\s*/\s*\d+\]\s*REVISAR(?![A-Za-z])(?P<motivos>.*)$")
+_PADRAO_INDICE_NOME = re.compile(r"^(?P<indice>\d+)_")
+
+
+def recuperar_do_log(caminho_log, total=None) -> dict:
+    """Le o log persistente e devolve CANDIDATOS a clipe concluido.
+
+    O log nunca e aceito sozinho como prova: quem chama precisa confirmar que
+    o arquivo existe na pasta e passa pela validacao de midia. Serve para
+    quando o checkpoint sumiu, ficou incompleto ou defasado.
+
+    Retorna {indice: {"arquivo": nome, "revisar": bool, "motivos": [...]}}.
+    """
+    if not caminho_log or not os.path.isfile(caminho_log):
+        return {}
+    try:
+        with open(caminho_log, encoding="utf-8", errors="replace") as arquivo:
+            linhas = arquivo.read().splitlines()
+    except OSError:
+        return {}
+
+    candidatos = {}
+    for linha in linhas:
+        encontrado = _PADRAO_SALVO.search(linha)
+        if encontrado:
+            nome = os.path.basename(encontrado.group("arquivo").strip())
+            indice_nome = _PADRAO_INDICE_NOME.match(nome)
+            if not indice_nome:
+                continue
+            indice = int(indice_nome.group("indice"))
+            if total is not None and not (1 <= indice <= total):
+                continue
+            # Uma reexecucao posterior sobrescreve o registro anterior.
+            candidatos.setdefault(indice, {"revisar": False, "motivos": []})
+            candidatos[indice]["arquivo"] = nome
+            continue
+
+        revisar = _PADRAO_REVISAR.search(linha)
+        if revisar:
+            indice = int(revisar.group("indice"))
+            if total is not None and not (1 <= indice <= total):
+                continue
+            item = candidatos.setdefault(indice, {"revisar": False, "motivos": []})
+            item["revisar"] = True
+            motivos = revisar.group("motivos").split(":", 1)
+            if len(motivos) == 2:
+                item["motivos"] = [
+                    m.strip() for m in motivos[1].split(",") if m.strip()
+                ]
+    return candidatos
+
+
+def inspecionar_retomada(checkpoint, pasta_saida, segmentos, caminho_log=None):
+    """Classifica saídas existentes sem renderizar novamente mídia válida.
+
+    Ordem das fontes: checkpoint > log persistente > varredura da pasta.
+    """
     concluidos = {}
     pendentes = []
     invalidos = []
     em_revisao = []
     clipes = (checkpoint or {}).get("clipes", {})
 
+    do_log = recuperar_do_log(caminho_log, total=len(segmentos))
+
     for indice, _segmento in enumerate(segmentos, 1):
         item = clipes.get(str(indice), {})
         resultado = item.get("resultado") or {}
         arquivo = item.get("arquivo") or resultado.get("arquivo")
+        registro_log = do_log.get(indice) or {}
+        if not arquivo and registro_log.get("arquivo"):
+            # Checkpoint ausente/defasado: o log aponta o candidato, a
+            # validacao de midia logo abaixo decide se ele vale.
+            arquivo = os.path.join(pasta_saida, registro_log["arquivo"])
         if not arquivo:
             prefixo = f"{indice:02d}_"
             encontrados = [
@@ -140,7 +204,11 @@ def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
             concluidos[indice] = arquivo
             # Clipe renderizado, mas sem enquadramento seguro: fica separado
             # dos prontos ate alguem revisar.
-            if item.get("status") == "revisar" or resultado.get("revisar"):
+            if (
+                item.get("status") == "revisar"
+                or resultado.get("revisar")
+                or registro_log.get("revisar")
+            ):
                 em_revisao.append(indice)
         else:
             pendentes.append(indice)

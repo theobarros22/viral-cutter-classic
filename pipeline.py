@@ -798,7 +798,9 @@ def etapa3_processar(
         )
         salvar_checkpoint(arquivo_checkpoint, checkpoint)
 
-    inventario = inspecionar_retomada(checkpoint, pasta_saida, segmentos) if retomar else {
+    inventario = inspecionar_retomada(
+        checkpoint, pasta_saida, segmentos, caminho_log=arquivo_log_trabalho
+    ) if retomar else {
         "concluidos": {}, "pendentes": list(range(1, total + 1)), "invalidos": [],
         "em_revisao": [], "prontos": [],
     }
@@ -1080,7 +1082,7 @@ def etapa3_processar(
             }
             checkpoint["ultimo_erro"] = None
             evento = publicar_progresso(i, "revisar" if precisa_revisao else "concluido")
-            log(f"   Salvo: {nome_arquivo}")
+            log(f"   [{i}/{total}] Salvo: {nome_arquivo}")
             log(
                 f"   Tempos: corte {formatar_tempo(tempo_corte)} | "
                 f"falante {formatar_tempo(tempo_falante)} | "

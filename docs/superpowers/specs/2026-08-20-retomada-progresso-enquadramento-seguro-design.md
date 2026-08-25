@@ -126,3 +126,38 @@ saída válida é sobrescrita sem a escolha explícita de reprocessar.
 - Editor manual quadro a quadro;
 - Reenquadrar individualmente um clipe já exportado pela interface;
 - Sincronização em nuvem ou fila remota.
+
+## Regra definitiva do enquadramento (validada em 25/08/2026)
+
+Esta secao e invariante: qualquer alteracao futura no enquadramento precisa
+manter as quatro garantias abaixo, cobertas por `tests/test_enquadramento_seguro.py`.
+
+1. **Cabeca inteira e obrigatoria.** A caixa da cabeca (1.5x a largura do rosto,
+   0.85 alturas de rosto para cada lado do centro) tem de caber no crop com
+   3.5% de margem livre em cada borda. Quem ja aparece cortado na FONTE so e
+   aceito se o crop encostar na mesma borda — nunca se corta mais do que o
+   video original ja cortava.
+2. **Ombros e tronco sao preferencia, nao criterio de reprovacao.** Num close
+   de podcast os ombros nao cabem num 9:16. Exigi-los reprovava ate os quadros
+   corretos (medido nos clipes reais do Papo Reto #60). Eles servem apenas para
+   escolher o melhor centro do crop.
+3. **Foco em pessoa valida.** Dois "lados" so viram duas pessoas quando estao
+   mais afastados que a soma dos meios-ombros E tem rostos de tamanho
+   compativel (razao minima 0.45). Sem isso, uma deteccao espuria ao lado do
+   falante virava lado B e o split mostrava a MESMA pessoa nos dois paineis.
+4. **Um unico ponto de decisao.** `_calcular_filtros_shot` e a fonte unica de
+   layout para o motor rapido FFmpeg e para o fallback por pipe. Nenhum motor
+   pode calcular crop por conta propria. A degradacao e em cascata: modo pedido
+   -> SPLIT (so com duas pessoas distintas) -> dois paineis horizontais
+   preenchendo todo o 9:16, sem fundo desfocado. Sem modo seguro, o clipe vira
+   status `revisar`, com o motivo no checkpoint, no log e no resumo final, e
+   nao conta como concluido.
+
+### Recuperacao pelo log — implementada
+
+`checkpoint.recuperar_do_log()` le as linhas `Salvo:` e `[N/T] REVISAR` do log
+persistente e devolve CANDIDATOS. O log nunca e prova sozinho: cada candidato
+precisa existir na pasta e passar por `resultado_valido` (FFprobe). Ordem das
+fontes em `inspecionar_retomada`: checkpoint > log > varredura da pasta.
+Verificado no trabalho real do Papo Reto #60: apagando o checkpoint, o log
+recupera os 10 clipes prontos e a producao retoma no clipe 11 de 56.
