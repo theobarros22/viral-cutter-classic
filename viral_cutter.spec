@@ -40,11 +40,14 @@ hidden += [
     "filelock", "fsspec", "requests", "rich", "typer", "click",
     "pydantic", "pydantic_core", "tomlkit", "groovy",
     "numpy", "PIL", "scipy", "matplotlib", "ffmpeg_utils", "runtime", "checkpoint",
+    # Janela nativa: o backend WinForms/WebView2 e carregado dinamicamente
+    # pelo pywebview, entao o PyInstaller nao o enxerga sozinho.
+    "webview", "webview.platforms.winforms", "clr", "interface", "app_desktop",
 ]
 
 block_cipher = None
 a = Analysis(
-    ["interface.py"],
+    ["app_desktop.py"],
     pathex=[os.path.abspath(".")],
     binaries=binaries,
     datas=datas,

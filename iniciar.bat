@@ -12,5 +12,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-"venv311\Scripts\python.exe" interface.py
+"venv311\Scripts\pythonw.exe" app_desktop.py
 

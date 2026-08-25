@@ -7,6 +7,7 @@ openai-whisper
 opencv-python
 pydub
 pyinstaller
+pywebview  # janela nativa (WebView2) — o app nao abre mais no navegador
 torch
 
 # Performance e novas funcionalidades (04/07/2026) — todas com fallback:
