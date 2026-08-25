@@ -120,6 +120,7 @@ def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
     concluidos = {}
     pendentes = []
     invalidos = []
+    em_revisao = []
     clipes = (checkpoint or {}).get("clipes", {})
 
     for indice, _segmento in enumerate(segmentos, 1):
@@ -137,6 +138,10 @@ def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
 
         if arquivo and resultado_valido({"arquivo": arquivo}):
             concluidos[indice] = arquivo
+            # Clipe renderizado, mas sem enquadramento seguro: fica separado
+            # dos prontos ate alguem revisar.
+            if item.get("status") == "revisar" or resultado.get("revisar"):
+                em_revisao.append(indice)
         else:
             pendentes.append(indice)
             if arquivo and os.path.exists(arquivo):
@@ -147,6 +152,8 @@ def inspecionar_retomada(checkpoint, pasta_saida, segmentos):
         "concluidos": concluidos,
         "pendentes": pendentes,
         "invalidos": invalidos,
+        "em_revisao": em_revisao,
+        "prontos": [i for i in concluidos if i not in em_revisao],
         "total": len(segmentos),
     }
 

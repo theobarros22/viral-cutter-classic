@@ -747,7 +747,8 @@ def etapa3_processar(
         salvar_checkpoint(arquivo_checkpoint, checkpoint)
 
     inventario = inspecionar_retomada(checkpoint, pasta_saida, segmentos) if retomar else {
-        "concluidos": {}, "pendentes": list(range(1, total + 1)), "invalidos": []
+        "concluidos": {}, "pendentes": list(range(1, total + 1)), "invalidos": [],
+        "em_revisao": [], "prontos": [],
     }
     concluidos = {}
     for indice, arquivo in inventario["concluidos"].items():
@@ -762,8 +763,12 @@ def etapa3_processar(
             "fim": segmentos[indice - 1]["fim"],
         }
         concluidos[indice] = resultado
+        # Preserva o status "revisar": um clipe sem enquadramento seguro nao
+        # vira "concluido" so porque o arquivo existe.
+        estado = "revisar" if indice in inventario.get("em_revisao", []) else "concluido"
         checkpoint["clipes"][str(indice)] = {
-            "status": "concluido", "etapa": "concluido", "resultado": resultado,
+            "status": estado, "etapa": estado, "resultado": resultado,
+            "motivos_revisao": resultado.get("motivos_revisao") or [],
         }
     for indice in inventario["invalidos"]:
         checkpoint["clipes"].setdefault(str(indice), {})["status"] = "pendente"
@@ -786,7 +791,13 @@ def etapa3_processar(
             progresso_evento_callback(evento)
         return evento
     if concluidos:
-        log(f"RETOMANDO: {len(concluidos)}/{total} clipe(s) ja concluidos.")
+        _em_revisao = inventario.get("em_revisao") or []
+        log(
+            f"RETOMANDO: {len(concluidos) - len(_em_revisao)} pronto(s), "
+            f"{len(inventario.get('pendentes') or [])} pendente(s), "
+            f"{len(inventario.get('invalidos') or [])} invalido(s), "
+            f"{len(_em_revisao)} em revisao - de {total} clipe(s)."
+        )
     log(f"Checkpoint: {arquivo_checkpoint}")
     log(f"Log persistente: {arquivo_log_trabalho}")
     log(f"Progresso inicial: {len(concluidos)}/{total} ({len(concluidos) / total * 100:.0f}%)")

@@ -158,3 +158,28 @@ def test_crop_dimensions_are_even_for_h264():
     layout = enq._calcular_filtros_shot(plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H)
     _, _, w, h = layout["crop"]
     assert w % 2 == 0 and h % 2 == 0
+
+
+def test_resume_keeps_review_clips_out_of_ready_count(tmp_path, monkeypatch):
+    """Retomada nao promove clipe em revisao a 'pronto' so porque o arquivo existe."""
+    import checkpoint as ckp
+    from checkpoint import inspecionar_retomada
+
+    monkeypatch.setattr(ckp, "resultado_valido", lambda r: bool(r and r.get("arquivo")))
+
+    arquivo = tmp_path / "01_clipe.mp4"
+    arquivo.write_bytes(b"\0" * 70000)
+    checkpoint = {
+        "clipes": {
+            "1": {
+                "status": "revisar",
+                "resultado": {"arquivo": str(arquivo), "revisar": True},
+            }
+        }
+    }
+    segmentos = [{"inicio": 0, "fim": 10, "titulo": "clipe"}]
+
+    inventario = inspecionar_retomada(checkpoint, str(tmp_path), segmentos)
+
+    assert inventario["em_revisao"] == [1]
+    assert inventario["prontos"] == []
