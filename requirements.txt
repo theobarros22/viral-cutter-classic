@@ -7,6 +7,7 @@ openai-whisper
 opencv-python
 pydub
 pyinstaller
+pytest      # a suite usa fixtures de pytest; unittest ignora 41 testes
 pywebview  # janela nativa (WebView2) — o app nao abre mais no navegador
 torch
 

@@ -15,7 +15,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-"venv311\Scripts\python.exe" -m unittest discover -s tests -v
+"venv311\Scripts\python.exe" -m pytest tests -q
 if errorlevel 1 (
   echo ERRO: testes falharam. Build cancelado.
   pause

@@ -30,7 +30,7 @@ $python = Join-Path $PSScriptRoot "venv311\Scripts\python.exe"
 
     & $python diagnostico.py
     if ($LASTEXITCODE -ne 0) { throw "Diagnóstico falhou." }
-    & $python -m unittest discover -s tests -v
+    & $python -m pytest tests -q
     if ($LASTEXITCODE -ne 0) { throw "Testes falharam." }
     Fechar-ViralCutter
     & $python -m PyInstaller viral_cutter.spec --noconfirm --clean

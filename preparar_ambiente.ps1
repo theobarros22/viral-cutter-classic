@@ -121,7 +121,7 @@ foreach ($nome in @("ffmpeg.exe", "ffprobe.exe")) {
 
 & $pythonVenv diagnostico.py
 if ($LASTEXITCODE -ne 0) { throw "Diagnóstico falhou." }
-& $pythonVenv -m unittest discover -s tests -v
+& $pythonVenv -m pytest tests -q
 if ($LASTEXITCODE -ne 0) { throw "Testes falharam." }
 
 Write-Host ""
