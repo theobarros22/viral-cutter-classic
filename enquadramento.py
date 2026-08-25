@@ -377,6 +377,26 @@ def _geometria_fallback_split(largura: int, altura: int, saida_w: int, saida_h: 
     }
 
 
+def _detalhar_erro_ffmpeg(stderr: str, codigo: int) -> str:
+    """Nunca devolve mensagem vazia.
+
+    Com -loglevel error o FFmpeg pode morrer sem escrever nada no stderr — foi
+    o que aconteceu no clipe 14 do Papo Reto #60, e os dois motores relataram
+    "falhou: " sem uma pista sequer. Sem o codigo de saida nao da para separar
+    disputa por encoder de erro de parametro.
+    """
+    texto = (stderr or "").strip()
+    if texto:
+        return texto[-600:]
+    if codigo in (-1073741819, 3221225477):
+        return "processo encerrado pelo sistema (acesso invalido)"
+    return (
+        f"sem mensagem no stderr; codigo {codigo}. "
+        "Causas comuns: encoder NVENC ocupado por outro processo, "
+        "arquivo de saida em uso ou disco sem espaco."
+    )
+
+
 def _registrar(relatorio, motivo: str, revisar: bool = False, instante=None) -> None:
     """Acumula motivos de segurança do enquadramento para o pipeline.
 
@@ -809,7 +829,11 @@ def _renderizar_enquadramento_ffmpeg(
             errors="replace",
         )
         if resultado.returncode != 0:
-            print(f"   ⚠️ FFmpeg filter_complex falhou: {resultado.stderr[-500:]}")
+            print(
+                "   ⚠️ FFmpeg filter_complex falhou "
+                f"(codigo {resultado.returncode}): "
+                f"{_detalhar_erro_ffmpeg(resultado.stderr, resultado.returncode)}"
+            )
             if os.path.exists(caminho_saida):
                 os.remove(caminho_saida)
             return False
@@ -919,7 +943,10 @@ def _renderizar_enquadramento_pipe(
     if codigo == 0 and not erro_pipe:
         print("   ✅ Enquadramento concluído (pipe fallback)!")
     else:
-        print(f"   ⚠️ Erro no FFmpeg ao exportar (pipe): {stderr[-600:]}")
+        print(
+            f"   ⚠️ Erro no FFmpeg ao exportar (pipe) (codigo {codigo}): "
+            f"{_detalhar_erro_ffmpeg(stderr, codigo)}"
+        )
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
 

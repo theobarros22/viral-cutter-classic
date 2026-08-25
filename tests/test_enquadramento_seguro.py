@@ -249,3 +249,11 @@ def test_review_report_says_where_the_problem_is():
     )
     assert relatorio["revisar"] is True
     assert relatorio["instantes"] == [42.7]
+
+
+def test_ffmpeg_error_is_never_reported_empty():
+    """Clipe 14 do Papo Reto falhou com stderr vazio nos dois motores."""
+    assert enq._detalhar_erro_ffmpeg("", 1).strip()
+    assert "codigo 1" in enq._detalhar_erro_ffmpeg("", 1)
+    assert enq._detalhar_erro_ffmpeg("   ", 8) != ""
+    assert enq._detalhar_erro_ffmpeg("Invalid argument", 1) == "Invalid argument"
