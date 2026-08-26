@@ -87,6 +87,9 @@ PROPORCAO_SAIDA_PADRAO = 1080 / 1920  # todas as resolucoes de saida sao 9:16
 # trocar de camera varias vezes sem que a analise percebesse.
 INTERVALO_AMOSTRA_PADRAO_S = 0.8
 MAX_AMOSTRAS_POR_CENA = 400  # teto de seguranca para cenas muito longas
+# Dividir o shot para nao cortar ninguem gera mais blocos; o grafo do
+# FFmpeg da conta de bem mais que os 50 originais.
+LIMITE_SHOTS_FFMPEG = 200
 LIMIAR_MUDANCA_PLANO_ZOOM = 1.35
 
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
@@ -537,13 +540,19 @@ def aplicar_enquadramento(
 
     # ── Passo 4: Renderização de Alta Performance (FFmpeg direto ou Pipe Fallback)
     segmentos = _agrupar_planos_em_segmentos(plano, fps)
-    # Reancora cada shot no que realmente aparece no video naquele intervalo.
+    # Reancora cada shot no que realmente aparece no video naquele intervalo,
+    # reaproveitando as amostras densas ja coletadas pela analise de cena.
+    mapa_amostras = {
+        quadro: rostos
+        for cena in cenas
+        for quadro, rostos in (cena.get("amostras") or [])
+    }
     segmentos = _ajustar_segmentos_pelos_frames(
-        caminho_entrada, segmentos, largura, altura, fps
+        caminho_entrada, segmentos, largura, altura, fps, mapa_amostras
     )
 
     # Render rápido quando o plano é composto por blocos estáveis (<= 50 shots)
-    if segmentos and len(segmentos) <= 50:
+    if segmentos and len(segmentos) <= LIMITE_SHOTS_FFMPEG:
         print(f"   🚀 Renderizando {total_frames} frames ({len(segmentos)} bloco(s) estáveis) via FFmpeg nativo...")
         sucesso_ffmpeg = _renderizar_enquadramento_ffmpeg(
             caminho_entrada, caminho_saida, segmentos, largura, altura,
@@ -626,48 +635,71 @@ def _agrupar_planos_em_segmentos(plano: list, fps: float) -> list:
 
 def _ajustar_segmentos_pelos_frames(
     caminho_video: str, segmentos: list, largura: int, altura: int, fps: float,
+    amostras_por_frame: dict = None,
 ) -> list:
-    """Confere o alvo de cada shot contra os rostos REAIS daquele intervalo.
+    """Reancora cada shot nos rostos que realmente aparecem no seu intervalo.
 
-    Todo o resto do calculo trabalha com medianas de amostras: se a analise
-    errar o alvo, a validacao aprova um crop que corta a pessoa, porque ela
-    confere o crop contra o alvo — nunca contra o frame. Aqui o alvo e
-    reancorado no que existe de fato no video, e o shot e dividido quando os
-    rostos do intervalo nao cabem num crop unico.
+    Todo o resto do calculo trabalha com medianas: se a analise errar o alvo,
+    a validacao aprova um crop que corta a pessoa, porque ela confere o crop
+    contra o ALVO — nunca contra o frame. Aqui o alvo vem do que existe de
+    fato no video, e o shot se divide quando as posicoes observadas nao cabem
+    num crop unico.
+
+    Reaproveita as amostras que a analise de cena ja coletou (uma a cada
+    ~0.8s). Amostrar de novo so tres frames por shot deixava passar o
+    movimento entre eles — foi assim que sobraram cortes na auditoria.
     """
     if not segmentos:
         return segmentos
 
-    from rostos import _inicializar_detector, _fechar_detector, detectar_rostos_robusto
-
-    detector = _inicializar_detector()
-    if detector is None:
-        return segmentos
-
-    cap = cv2.VideoCapture(caminho_video)
+    amostras_por_frame = amostras_por_frame or {}
     largura_crop = _largura_crop_normalizada(largura, altura)
     ajustados = []
+    detector = None
+    cap = None
+
+    def _posicoes_do_intervalo(ini_frame, fim_frame):
+        encontradas = []
+        for quadro in sorted(amostras_por_frame):
+            if quadro < ini_frame:
+                continue
+            if quadro >= fim_frame:
+                break
+            rostos = [
+                r for r in amostras_por_frame[quadro]
+                if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
+            ]
+            if rostos:
+                maior = max(rostos, key=lambda r: r["w"])
+                encontradas.append((quadro, float(maior["x"]),
+                                    float(maior["y"]), float(maior["w"])))
+        return encontradas
 
     try:
         for seg in segmentos:
             ini, fim = seg["frame_ini"], seg["frame_fim"]
-            posicoes = []  # [(frame, x, y, w)]
-            for fracao in (0.15, 0.5, 0.85):
-                alvo = int(ini + (fim - ini) * fracao)
-                if alvo >= fim:
-                    alvo = max(ini, fim - 1)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, alvo)
-                ok, frame = cap.read()
-                if not ok:
-                    continue
-                rostos = [
-                    r for r in detectar_rostos_robusto(frame, detector)
-                    if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
-                ]
-                if rostos:
-                    maior = max(rostos, key=lambda r: r["w"])
-                    posicoes.append((alvo, float(maior["x"]), float(maior["y"]),
-                                     float(maior["w"])))
+            posicoes = _posicoes_do_intervalo(ini, fim)
+
+            if not posicoes:
+                # Shot curto entre duas amostras: le o proprio video.
+                if detector is None:
+                    from rostos import _inicializar_detector, detectar_rostos_robusto
+                    detector = _inicializar_detector()
+                    cap = cv2.VideoCapture(caminho_video)
+                if detector is not None and cap is not None:
+                    from rostos import detectar_rostos_robusto
+                    meio = (ini + fim) // 2
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, meio)
+                    ok, frame = cap.read()
+                    if ok:
+                        rostos = [
+                            r for r in detectar_rostos_robusto(frame, detector)
+                            if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
+                        ]
+                        if rostos:
+                            maior = max(rostos, key=lambda r: r["w"])
+                            posicoes = [(meio, float(maior["x"]),
+                                         float(maior["y"]), float(maior["w"]))]
 
             if not posicoes:
                 ajustados.append(seg)
@@ -675,48 +707,43 @@ def _ajustar_segmentos_pelos_frames(
 
             modo = seg["plano"].get("modo", "SOLO_A")
             if modo in ("SPLIT", "FALLBACK_SPLIT"):
-                # Painel duplo ja mostra os dois lados; nao ha alvo unico.
                 ajustados.append(seg)
                 continue
 
-            xs = [p[1] for p in posicoes]
-            maior_w = max(p[3] for p in posicoes)
-            if _cabe_no_mesmo_crop(xs, maior_w, largura_crop):
+            def _shot(p_ini, p_fim, grupo):
+                xs = [p[1] for p in grupo]
                 plano = dict(seg["plano"])
-                plano["xa"] = (min(xs) + max(xs)) / 2.0
-                plano["xb"] = plano["xa"]
-                plano["ya"] = float(np.median([p[2] for p in posicoes]))
-                plano["yb"] = plano["ya"]
-                plano["ta"] = maior_w
-                plano["tb"] = maior_w
-                novo = dict(seg)
-                novo["plano"] = plano
-                ajustados.append(novo)
-                continue
-
-            # Os rostos do intervalo nao cabem juntos: divide o shot em
-            # pedacos ancorados em cada posicao observada.
-            fronteiras = [ini] + [p[0] for p in posicoes[1:]] + [fim]
-            for indice, posicao in enumerate(posicoes):
-                p_ini = fronteiras[indice]
-                p_fim = fronteiras[indice + 1]
-                if p_fim <= p_ini:
-                    continue
-                plano = dict(seg["plano"])
-                plano["xa"] = plano["xb"] = posicao[1]
-                plano["ya"] = plano["yb"] = posicao[2]
-                plano["ta"] = plano["tb"] = posicao[3]
-                ajustados.append({
+                plano["xa"] = plano["xb"] = (min(xs) + max(xs)) / 2.0
+                plano["ya"] = plano["yb"] = float(np.median([p[2] for p in grupo]))
+                plano["ta"] = plano["tb"] = max(p[3] for p in grupo)
+                return {
                     **seg,
                     "plano": plano,
                     "frame_ini": p_ini,
                     "frame_fim": p_fim,
                     "start_s": p_ini / fps,
                     "end_s": p_fim / fps,
-                })
+                }
+
+            # Acumula enquanto tudo couber; quebra quando deixar de caber.
+            grupo = [posicoes[0]]
+            inicio_bloco = ini
+            for posicao in posicoes[1:]:
+                xs = [p[1] for p in grupo] + [posicao[1]]
+                maior_w = max(max(p[3] for p in grupo), posicao[3])
+                if _cabe_no_mesmo_crop(xs, maior_w, largura_crop):
+                    grupo.append(posicao)
+                    continue
+                ajustados.append(_shot(inicio_bloco, posicao[0], grupo))
+                inicio_bloco = posicao[0]
+                grupo = [posicao]
+            ajustados.append(_shot(inicio_bloco, fim, grupo))
     finally:
-        cap.release()
-        _fechar_detector(detector)
+        if cap is not None:
+            cap.release()
+        if detector is not None:
+            from rostos import _fechar_detector
+            _fechar_detector(detector)
 
     return ajustados
 
@@ -1327,6 +1354,7 @@ def _analisar_rostos_por_cena(
             dados = dict(cena)
             dados["frame_ini"] = pedaco["frame_ini"]
             dados["frame_fim"] = pedaco["frame_fim"]
+            dados["amostras"] = pedaco["amostras"]
             dados.update(_agrupar_posicoes_cena(*posicoes))
             cenas_finais.append(dados)
 
