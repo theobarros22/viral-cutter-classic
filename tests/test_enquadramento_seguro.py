@@ -116,15 +116,16 @@ def test_scene_without_faces_is_not_flagged_for_review():
     assert "cena_sem_rosto_confiavel" in relatorio["motivos"]
 
 
-def test_person_larger_than_any_panel_is_flagged_for_review():
-    """Rosto plausivel em quadro estreito: nenhum modo cabe -> revisar."""
+def test_no_safe_crop_falls_back_to_the_open_frame():
+    """Regra do usuario: na duvida, quadro aberto — nunca um crop arriscado."""
     plano = {"modo": "SOLO_A", "xa": 0.5, "ya": 0.5, "ta": 0.25}
     relatorio = {}
-    enq._calcular_filtros_shot(
+    layout = enq._calcular_filtros_shot(
         plano, 960, 540, SAIDA_W, SAIDA_H, relatorio=relatorio
     )
-    assert relatorio.get("revisar") is True
-    assert relatorio["motivos"]
+    assert layout["modo_final"] == "ABERTO"
+    assert "quadro_aberto_por_seguranca" in relatorio["motivos"]
+    assert not relatorio.get("revisar")
 
 
 def test_both_engines_share_the_same_layout():
@@ -240,15 +241,24 @@ def test_a_real_close_up_is_still_a_valid_target():
     assert enq._caixa_cabeca((0.5, 0.45, 0.25), LARGURA, ALTURA) is not None
 
 
-def test_review_report_says_where_the_problem_is():
-    """Revisao manual precisa do instante, nao so do motivo."""
-    plano = {"modo": "SOLO_A", "xa": 0.5, "ya": 0.5, "ta": 0.25}
-    relatorio = {}
-    enq._calcular_filtros_shot(
-        plano, 960, 540, SAIDA_W, SAIDA_H, relatorio=relatorio, instante=42.7
+def test_open_frame_uses_the_full_height_and_centers_on_the_person():
+    """O quadro aberto nao fecha mais que a altura da fonte."""
+    layout = enq._quadro_aberto(
+        [(0.30, 0.45, 0.08), (0.30, 0.45, 0.08)], LARGURA, ALTURA,
+        SAIDA_W, SAIDA_H,
     )
-    assert relatorio["revisar"] is True
-    assert relatorio["instantes"] == [42.7]
+    x, y, w, h = layout["crop"]
+    assert h == ALTURA          # altura inteira: sem zoom
+    assert y == 0
+    assert 0 <= x <= LARGURA - w
+    # centralizado na pessoa, nao no meio do quadro
+    assert abs((x + w / 2) - 0.30 * LARGURA) < w / 2
+
+
+def test_open_frame_without_faces_stays_centered():
+    layout = enq._quadro_aberto([(0.5, 0.4, 0.0)], LARGURA, ALTURA, SAIDA_W, SAIDA_H)
+    x, _y, w, _h = layout["crop"]
+    assert abs((x + w / 2) - LARGURA / 2) <= 1
 
 
 def test_ffmpeg_error_is_never_reported_empty():

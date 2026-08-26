@@ -857,6 +857,41 @@ def _expressao_crop_x(trajetoria: list, largura: int, crop_w: int,
     return expressao
 
 
+def _quadro_aberto(alvos: list, largura: int, altura: int,
+                   saida_w: int, saida_h: int) -> dict:
+    """Crop mais aberto possivel, centrado em quem esta na cena.
+
+    Regra do usuario: na duvida, quadro aberto. Usa toda a altura da fonte
+    (nao fecha mais que isso) e centraliza nas pessoas quando ha deteccao
+    confiavel; sem deteccao, fica no centro do quadro. Nunca corta cabeca,
+    porque nao aperta o enquadramento.
+    """
+    proporcao = saida_w / float(saida_h)
+    crop_h = altura - altura % 2
+    crop_w = int(round(crop_h * proporcao))
+    crop_w -= crop_w % 2
+    if crop_w > largura:
+        crop_w = largura - largura % 2
+        crop_h = int(round(crop_w / proporcao))
+        crop_h -= crop_h % 2
+
+    caixas = _caixas_cabecas(alvos, largura, altura)
+    if caixas:
+        centro = (min(c[0] for c in caixas) + max(c[2] for c in caixas)) / 2.0
+    else:
+        centro = largura / 2.0
+
+    x = int(round(centro - crop_w / 2.0))
+    x = max(0, min(largura - crop_w, x))
+    y = max(0, (altura - crop_h) // 2)
+    return {
+        "tipo": "solo",
+        "modo_final": "ABERTO",
+        "crop": (x, y, crop_w, crop_h),
+        "scale": (saida_w, saida_h),
+    }
+
+
 def _calcular_filtros_shot(
     plano: dict,
     largura: int,
@@ -935,7 +970,10 @@ def _calcular_filtros_shot(
     if modo == "FALLBACK_SPLIT":
         layout, ok, motivo = _fallback()
         if not ok:
-            _registrar(relatorio, motivo, revisar=True, instante=instante)
+            _registrar(relatorio, "quadro_aberto_por_seguranca")
+            return _quadro_aberto(
+                [alvo_a, alvo_b], largura, altura, saida_w, saida_h
+            )
         return layout
 
     if modo in ("SOLO_A", "SOLO_B"):
@@ -970,15 +1008,15 @@ def _calcular_filtros_shot(
         if ok_split:
             _registrar(relatorio, "degradado_para_split")
             return layout_split
-        motivo = motivo_split or motivo
 
-    layout_fb, ok_fb, motivo_fb = _fallback()
-    if ok_fb:
-        _registrar(relatorio, "degradado_para_paineis_horizontais")
-        return layout_fb
-
-    _registrar(relatorio, motivo_fb or motivo or "sem_modo_seguro", revisar=True, instante=instante)
-    return layout_fb
+    # NA DUVIDA, QUADRO ABERTO. A preferência é o crop fechado com a pessoa
+    # centralizada; quando ele não cabe com segurança, o certo não é forçar
+    # um enquadramento arriscado nem picotar em painéis: é abrir o quadro,
+    # mostrar a cena inteira e deixar a pessoa dentro dela.
+    _registrar(relatorio, "quadro_aberto_por_seguranca")
+    return _quadro_aberto(
+        [alvo_a, alvo_b], largura, altura, saida_w, saida_h
+    )
 
 
 def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, saida_w: int, saida_h: int, relatorio: dict = None) -> str:
