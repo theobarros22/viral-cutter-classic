@@ -1009,10 +1009,15 @@ def _calcular_filtros_shot(
             _registrar(relatorio, "degradado_para_split")
             return layout_split
 
-    # NA DUVIDA, QUADRO ABERTO. A preferência é o crop fechado com a pessoa
-    # centralizada; quando ele não cabe com segurança, o certo não é forçar
-    # um enquadramento arriscado nem picotar em painéis: é abrir o quadro,
-    # mostrar a cena inteira e deixar a pessoa dentro dela.
+    # Ordem de preferência definida com exemplos reais:
+    #   1. crop fechado com a pessoa centralizada — o ideal;
+    #   2. dois painéis horizontais empilhados — aceitável, mostra tudo;
+    #   3. quadro aberto — na dúvida, nunca um crop arriscado.
+    layout_fb, ok_fb, _motivo_fb = _fallback()
+    if ok_fb:
+        _registrar(relatorio, "degradado_para_paineis_horizontais")
+        return layout_fb
+
     _registrar(relatorio, "quadro_aberto_por_seguranca")
     return _quadro_aberto(
         [alvo_a, alvo_b], largura, altura, saida_w, saida_h

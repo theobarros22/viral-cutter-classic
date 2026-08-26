@@ -350,3 +350,19 @@ def test_drifting_person_is_split_even_without_a_camera_cut():
 def test_vertical_source_gets_a_wider_relative_crop():
     """Fonte ja vertical quase nao precisa cortar na largura."""
     assert enq._largura_crop_normalizada(1080, 1920) == 1.0
+
+
+def test_panels_come_before_the_open_frame():
+    """Paineis empilhados sao aceitaveis; so caem para o quadro aberto se nao servirem."""
+    plano = {
+        "modo": "GRUPO",
+        "xa": 0.12, "ya": 0.45, "ta": 0.07,
+        "xb": 0.88, "yb": 0.45, "tb": 0.07,
+    }
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    assert layout["tipo"] == "split"
+    assert layout["top_scale"][1] + layout["bot_scale"][1] == SAIDA_H
+    assert not relatorio.get("revisar")
