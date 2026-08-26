@@ -716,8 +716,14 @@ def _ajustar_segmentos_pelos_frames(
                 continue
 
             modo = seg["plano"].get("modo", "SOLO_A")
-            if modo in ("SPLIT", "FALLBACK_SPLIT"):
+            if modo == "FALLBACK_SPLIT":
                 ajustados.append(seg)
+                continue
+
+            if modo == "SPLIT":
+                # Cada painel tem seu proprio alvo. Sem reancorar, os dois
+                # lados seguem a mediana da cena e podem mirar em ninguem.
+                ajustados.append(_reancorar_split(seg, amostras_por_frame, ini, fim))
                 continue
 
             def _shot(p_ini, p_fim, grupo):
@@ -767,6 +773,36 @@ def _ajustar_segmentos_pelos_frames(
             _fechar_detector(detector)
 
     return ajustados
+
+
+def _reancorar_split(seg: dict, amostras_por_frame: dict, ini: int, fim: int) -> dict:
+    """Aponta cada painel do split para o rosto que realmente esta daquele lado."""
+    esquerda, direita = [], []
+    for quadro in range(ini, fim):
+        rostos = amostras_por_frame.get(quadro)
+        if not rostos:
+            continue
+        validos = [
+            r for r in rostos
+            if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
+        ]
+        if len(validos) < 2:
+            continue
+        validos.sort(key=lambda r: r["x"])
+        esquerda.append(validos[0])
+        direita.append(validos[-1])
+
+    if not esquerda or not direita:
+        return seg
+
+    plano = dict(seg["plano"])
+    plano["xa"] = float(np.median([r["x"] for r in esquerda]))
+    plano["ya"] = float(np.median([r["y"] for r in esquerda]))
+    plano["ta"] = float(np.median([r["w"] for r in esquerda]))
+    plano["xb"] = float(np.median([r["x"] for r in direita]))
+    plano["yb"] = float(np.median([r["y"] for r in direita]))
+    plano["tb"] = float(np.median([r["w"] for r in direita]))
+    return {**seg, "plano": plano}
 
 
 def _suavizar_trajetoria(posicoes: list, fps: float) -> list:
