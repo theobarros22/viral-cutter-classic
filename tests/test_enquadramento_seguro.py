@@ -311,3 +311,32 @@ def test_subdivision_covers_the_whole_scene_without_gaps():
     assert pedacos[-1]["frame_fim"] == 1600
     for anterior, seguinte in zip(pedacos, pedacos[1:]):
         assert anterior["frame_fim"] == seguinte["frame_ini"]
+
+
+def test_block_never_holds_positions_that_do_not_fit_one_crop():
+    """O criterio de divisao e a folga real do quadro, nao um limiar arbitrario."""
+    largura_crop = enq._largura_crop_normalizada(1920, 1080)
+    assert 0.30 < largura_crop < 0.33  # 9:16 sobre fonte 16:9
+
+    # Cabeca de 0.225 + margens deixa pouco espaco para a pessoa se deslocar.
+    assert enq._cabe_no_mesmo_crop([0.50, 0.52], 0.15, largura_crop)
+    assert not enq._cabe_no_mesmo_crop([0.36, 0.50], 0.15, largura_crop)
+
+
+def test_drifting_person_is_split_even_without_a_camera_cut():
+    """Caso do clipe 48: a pessoa se desloca e o crop fixo corta a cabeca."""
+    cena = {"frame_ini": 0, "frame_fim": 1200}
+    amostras = [_amostra(f, 0.42 + f * 0.00008) for f in range(0, 1200, 100)]
+
+    pedacos = enq._subdividir_cena_por_plano(cena, amostras, 1920, 1080)
+
+    assert len(pedacos) >= 2
+    for pedaco in pedacos:
+        xs = [enq._plano_da_amostra(r)[0] for _f, r in pedaco["amostras"]]
+        maior = max(enq._plano_da_amostra(r)[1] for _f, r in pedaco["amostras"])
+        assert enq._cabe_no_mesmo_crop(xs, maior, enq._largura_crop_normalizada(1920, 1080))
+
+
+def test_vertical_source_gets_a_wider_relative_crop():
+    """Fonte ja vertical quase nao precisa cortar na largura."""
+    assert enq._largura_crop_normalizada(1080, 1920) == 1.0

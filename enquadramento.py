@@ -74,10 +74,13 @@ MIN_TAMANHO_ROSTO = 0.018
 # para um plano aberto.
 MAX_TAMANHO_ROSTO = 0.32
 
-# Quanto a posicao/zoom do rosto pode variar antes de ser considerado OUTRO
-# enquadramento. Medido no Papo Reto #60: uma "cena" de 66s continha planos
-# com o rosto em x=0.36 e x=0.50, e a mediana (0.356) nao servia para nenhum.
-LIMIAR_MUDANCA_PLANO_X = 0.07
+# Um bloco de cena so pode conter posicoes de rosto que caibam TODAS no
+# mesmo crop. O criterio nao e um limiar arbitrario: e a folga real que
+# sobra no quadro depois da cabeca e das margens. Num 9:16 sobre fonte 16:9
+# o crop ocupa 0.317 da largura e a cabeca 0.225 — sobram ~0.07 no total.
+# Um limiar maior que essa folga (era 0.07) aceita como "mesmo plano"
+# variacoes que ja cortam a pessoa.
+PROPORCAO_SAIDA_PADRAO = 1080 / 1920  # todas as resolucoes de saida sao 9:16
 LIMIAR_MUDANCA_PLANO_ZOOM = 1.35
 
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
@@ -1061,23 +1064,39 @@ def _plano_da_amostra(rostos: list):
     return (float(maior["x"]), float(maior["w"]))
 
 
-def _mudou_de_plano(anterior, atual) -> bool:
-    """Diz se duas amostras vieram de enquadramentos diferentes."""
+def _largura_crop_normalizada(largura: int, altura: int) -> float:
+    """Fracao da largura da fonte que o crop 9:16 consegue mostrar."""
+    if largura <= 0 or altura <= 0:
+        return 1.0
+    return min(1.0, (altura * PROPORCAO_SAIDA_PADRAO) / float(largura))
+
+
+def _cabe_no_mesmo_crop(amostras_x: list, maior_rosto: float,
+                        largura_crop: float) -> bool:
+    """Todas as posicoes do bloco cabem num unico crop, com a cabeca inteira?"""
+    if not amostras_x:
+        return True
+    amplitude = max(amostras_x) - min(amostras_x)
+    cabeca = maior_rosto * LARGURA_CABECA_ROSTO
+    margens = 2 * MARGEM_SEGURA_BORDA * largura_crop
+    return amplitude + cabeca + margens <= largura_crop
+
+
+def _mudou_de_zoom(anterior, atual) -> bool:
+    """Rosto muda de tamanho o bastante para ser outra camera."""
     if anterior is None or atual is None:
         return False
-    x_ant, w_ant = anterior
-    x_atu, w_atu = atual
-    if abs(x_atu - x_ant) > LIMIAR_MUDANCA_PLANO_X:
-        return True
-    maior, menor = max(w_ant, w_atu), min(w_ant, w_atu)
+    maior, menor = max(anterior[1], atual[1]), min(anterior[1], atual[1])
     return menor > 0 and maior / menor > LIMIAR_MUDANCA_PLANO_ZOOM
 
 
-def _subdividir_cena_por_plano(cena: dict, amostras: list) -> list:
-    """Divide a cena nos pontos onde o enquadramento muda.
+def _subdividir_cena_por_plano(cena: dict, amostras: list,
+                               largura: int = 1920, altura: int = 1080) -> list:
+    """Divide a cena onde o enquadramento deixa de caber num crop unico.
 
-    Sem isso, uma cena longa que na verdade contem varias cameras vira uma
-    mediana unica — e o crop aponta para um lugar onde ninguem esta.
+    Sem isso, uma cena longa que na verdade contem varias cameras — ou uma
+    pessoa que se desloca — vira uma mediana unica, e o crop aponta para um
+    lugar onde ninguem esta.
     """
     if len(amostras) < 2:
         return [{
@@ -1086,15 +1105,33 @@ def _subdividir_cena_por_plano(cena: dict, amostras: list) -> list:
             "amostras": amostras,
         }]
 
+    largura_crop = _largura_crop_normalizada(largura, altura)
     blocos = [[amostras[0]]]
     referencia = _plano_da_amostra(amostras[0][1])
+    xs_bloco = [referencia[0]] if referencia else []
+    maior_bloco = referencia[1] if referencia else 0.0
+
     for item in amostras[1:]:
         assinatura = _plano_da_amostra(item[1])
-        if _mudou_de_plano(referencia, assinatura):
+        if assinatura is None:
+            blocos[-1].append(item)
+            continue
+
+        candidatos_x = xs_bloco + [assinatura[0]]
+        candidato_w = max(maior_bloco, assinatura[1])
+        quebrar = (
+            _mudou_de_zoom(referencia, assinatura)
+            or not _cabe_no_mesmo_crop(candidatos_x, candidato_w, largura_crop)
+        )
+        if quebrar:
             blocos.append([item])
             referencia = assinatura
+            xs_bloco = [assinatura[0]]
+            maior_bloco = assinatura[1]
         else:
             blocos[-1].append(item)
+            xs_bloco = candidatos_x
+            maior_bloco = candidato_w
             if referencia is None:
                 referencia = assinatura
 
@@ -1129,6 +1166,8 @@ def _analisar_rostos_por_cena(
 
     detector = _inicializar_detector()
     cap = cv2.VideoCapture(caminho_video)
+    largura_fonte = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1920)
+    altura_fonte = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1080)
 
     cenas_finais = []
 
@@ -1160,7 +1199,7 @@ def _analisar_rostos_por_cena(
         # quando o detector de cortes perde a troca de camera. A mediana de
         # todos eles nao corresponde a plano nenhum e o crop fixo corta a
         # pessoa nos dois. Aqui a cena e quebrada onde o plano muda de fato.
-        for pedaco in _subdividir_cena_por_plano(cena, amostras):
+        for pedaco in _subdividir_cena_por_plano(cena, amostras, largura_fonte, altura_fonte):
             rostos_pedaco = [r for _f, rostos in pedaco["amostras"] for r in rostos]
             posicoes = _filtrar_rostos_na_zona_de_cabeca(rostos_pedaco)
             dados = dict(cena)
