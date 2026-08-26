@@ -74,6 +74,12 @@ MIN_TAMANHO_ROSTO = 0.018
 # para um plano aberto.
 MAX_TAMANHO_ROSTO = 0.32
 
+# Quanto a posicao/zoom do rosto pode variar antes de ser considerado OUTRO
+# enquadramento. Medido no Papo Reto #60: uma "cena" de 66s continha planos
+# com o rosto em x=0.36 e x=0.50, e a mediana (0.356) nao servia para nenhum.
+LIMIAR_MUDANCA_PLANO_X = 0.07
+LIMIAR_MUDANCA_PLANO_ZOOM = 1.35
+
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
 # Falsos positivos do cenário caem fora dela: TV/quadros na parede e
 # estátuas na estante ficam ALTOS (Y < 0.30); objetos na mesa em primeiro
@@ -1046,6 +1052,66 @@ def _detectar_cenas(caminho_video: str, fps: float, passo: int = PASSO_DETECCAO_
 
 # ── Análise de rostos por cena ────────────────────────────────────────────────
 
+def _plano_da_amostra(rostos: list):
+    """Assinatura do enquadramento numa amostra: posicao e tamanho do maior rosto."""
+    validos = [r for r in rostos if r.get("w", 0) > 0]
+    if not validos:
+        return None
+    maior = max(validos, key=lambda r: r["w"])
+    return (float(maior["x"]), float(maior["w"]))
+
+
+def _mudou_de_plano(anterior, atual) -> bool:
+    """Diz se duas amostras vieram de enquadramentos diferentes."""
+    if anterior is None or atual is None:
+        return False
+    x_ant, w_ant = anterior
+    x_atu, w_atu = atual
+    if abs(x_atu - x_ant) > LIMIAR_MUDANCA_PLANO_X:
+        return True
+    maior, menor = max(w_ant, w_atu), min(w_ant, w_atu)
+    return menor > 0 and maior / menor > LIMIAR_MUDANCA_PLANO_ZOOM
+
+
+def _subdividir_cena_por_plano(cena: dict, amostras: list) -> list:
+    """Divide a cena nos pontos onde o enquadramento muda.
+
+    Sem isso, uma cena longa que na verdade contem varias cameras vira uma
+    mediana unica — e o crop aponta para um lugar onde ninguem esta.
+    """
+    if len(amostras) < 2:
+        return [{
+            "frame_ini": cena["frame_ini"],
+            "frame_fim": cena["frame_fim"],
+            "amostras": amostras,
+        }]
+
+    blocos = [[amostras[0]]]
+    referencia = _plano_da_amostra(amostras[0][1])
+    for item in amostras[1:]:
+        assinatura = _plano_da_amostra(item[1])
+        if _mudou_de_plano(referencia, assinatura):
+            blocos.append([item])
+            referencia = assinatura
+        else:
+            blocos[-1].append(item)
+            if referencia is None:
+                referencia = assinatura
+
+    pedacos = []
+    for indice, bloco in enumerate(blocos):
+        inicio = cena["frame_ini"] if indice == 0 else bloco[0][0]
+        fim = cena["frame_fim"] if indice == len(blocos) - 1 else blocos[indice + 1][0][0]
+        if fim <= inicio:
+            continue
+        pedacos.append({"frame_ini": inicio, "frame_fim": fim, "amostras": bloco})
+    return pedacos or [{
+        "frame_ini": cena["frame_ini"],
+        "frame_fim": cena["frame_fim"],
+        "amostras": amostras,
+    }]
+
+
 def _analisar_rostos_por_cena(
     caminho_video: str,
     cenas: list,
@@ -1064,8 +1130,10 @@ def _analisar_rostos_por_cena(
     detector = _inicializar_detector()
     cap = cv2.VideoCapture(caminho_video)
 
+    cenas_finais = []
+
     for cena in cenas:
-        rostos_cena = []
+        amostras = []  # [(frame, [rostos daquele frame])]
 
         if detector is not None:
             n_frames_cena = cena["frame_fim"] - cena["frame_ini"]
@@ -1080,19 +1148,28 @@ def _analisar_rostos_por_cena(
                 ret, frame = cap.read()
                 if not ret:
                     continue
-                rostos = detectar_rostos_robusto(frame, detector)
-                for r in rostos:
-                    # Filtra rostos minúsculos: TV do cenário, estátuas,
-                    # manequins na estante — falsos positivos clássicos.
-                    if not MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO:
-                        continue
-                    rostos_cena.append(r)
+                rostos = [
+                    r for r in detectar_rostos_robusto(frame, detector)
+                    # Descarta rosto minusculo (TV, estatua, manequim) e rosto
+                    # grande demais para ser real (falso positivo no cenario).
+                    if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
+                ]
+                amostras.append((alvo, rostos))
 
-        posicoes_x, posicoes_y, posicoes_w = _filtrar_rostos_na_zona_de_cabeca(rostos_cena)
+        # Uma "cena" longa de podcast multicamera guarda varios enquadramentos
+        # quando o detector de cortes perde a troca de camera. A mediana de
+        # todos eles nao corresponde a plano nenhum e o crop fixo corta a
+        # pessoa nos dois. Aqui a cena e quebrada onde o plano muda de fato.
+        for pedaco in _subdividir_cena_por_plano(cena, amostras):
+            rostos_pedaco = [r for _f, rostos in pedaco["amostras"] for r in rostos]
+            posicoes = _filtrar_rostos_na_zona_de_cabeca(rostos_pedaco)
+            dados = dict(cena)
+            dados["frame_ini"] = pedaco["frame_ini"]
+            dados["frame_fim"] = pedaco["frame_fim"]
+            dados.update(_agrupar_posicoes_cena(*posicoes))
+            cenas_finais.append(dados)
 
-        # Agrupa as posições encontradas NESTA cena
-        cena.update(_agrupar_posicoes_cena(posicoes_x, posicoes_y, posicoes_w))
-
+    cenas = cenas_finais
     cap.release()
     if detector is not None:
         _fechar_detector(detector)

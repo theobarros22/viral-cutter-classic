@@ -257,3 +257,57 @@ def test_ffmpeg_error_is_never_reported_empty():
     assert "codigo 1" in enq._detalhar_erro_ffmpeg("", 1)
     assert enq._detalhar_erro_ffmpeg("   ", 8) != ""
     assert enq._detalhar_erro_ffmpeg("Invalid argument", 1) == "Invalid argument"
+
+
+def _amostra(frame, x, w=0.15):
+    return (frame, [{"x": x, "y": 0.35, "w": w}])
+
+
+def test_scene_is_split_when_the_camera_changes():
+    """Caso real do clipe 49: uma 'cena' de 66s continha dois enquadramentos."""
+    cena = {"frame_ini": 0, "frame_fim": 2000}
+    amostras = [_amostra(f, 0.36) for f in range(0, 1000, 200)]
+    amostras += [_amostra(f, 0.50) for f in range(1000, 2000, 200)]
+
+    pedacos = enq._subdividir_cena_por_plano(cena, amostras)
+
+    assert len(pedacos) == 2
+    assert pedacos[0]["frame_ini"] == 0
+    assert pedacos[1]["frame_fim"] == 2000
+    assert pedacos[0]["frame_fim"] == pedacos[1]["frame_ini"]
+
+
+def test_a_still_scene_is_not_split():
+    cena = {"frame_ini": 0, "frame_fim": 900}
+    amostras = [_amostra(f, 0.50 + (f % 3) * 0.005) for f in range(0, 900, 100)]
+    assert len(enq._subdividir_cena_por_plano(cena, amostras)) == 1
+
+
+def test_zoom_change_also_splits_the_scene():
+    """Mesma posicao, rosto muito maior = outra camera."""
+    cena = {"frame_ini": 0, "frame_fim": 800}
+    amostras = [_amostra(f, 0.50, 0.08) for f in range(0, 400, 100)]
+    amostras += [_amostra(f, 0.50, 0.16) for f in range(400, 800, 100)]
+    assert len(enq._subdividir_cena_por_plano(cena, amostras)) == 2
+
+
+def test_scene_without_faces_is_kept_whole():
+    cena = {"frame_ini": 0, "frame_fim": 600}
+    amostras = [(f, []) for f in range(0, 600, 100)]
+    pedacos = enq._subdividir_cena_por_plano(cena, amostras)
+    assert len(pedacos) == 1
+    assert pedacos[0]["frame_fim"] == 600
+
+
+def test_subdivision_covers_the_whole_scene_without_gaps():
+    cena = {"frame_ini": 100, "frame_fim": 1600}
+    amostras = [_amostra(f, 0.30) for f in range(100, 700, 150)]
+    amostras += [_amostra(f, 0.55) for f in range(700, 1200, 150)]
+    amostras += [_amostra(f, 0.80) for f in range(1200, 1600, 150)]
+
+    pedacos = enq._subdividir_cena_por_plano(cena, amostras)
+
+    assert pedacos[0]["frame_ini"] == 100
+    assert pedacos[-1]["frame_fim"] == 1600
+    for anterior, seguinte in zip(pedacos, pedacos[1:]):
+        assert anterior["frame_fim"] == seguinte["frame_ini"]
