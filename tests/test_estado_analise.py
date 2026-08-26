@@ -1,5 +1,6 @@
 """Persistencia de transcricao, pessoas e segmentos entre execucoes do app."""
 
+import json
 import os
 import sys
 
@@ -147,3 +148,37 @@ def test_stage3_rehydrates_people_before_detecting_the_speaker(tmp_path, monkeyp
     posicao_uso = fonte.find('_cache.get("pessoas"')
     assert posicao_restauracao != -1, "etapa3 precisa reidratar o estado salvo"
     assert posicao_restauracao < posicao_uso, "reidratar antes de usar as pessoas"
+
+
+def test_checkpoint_save_retries_when_windows_locks_the_file(tmp_path, monkeypatch):
+    """PermissionError transitorio derrubou um lote de 56 clipes com 45 prontos."""
+    destino = tmp_path / "checkpoint.json"
+    chamadas = {"n": 0}
+    replace_real = os.replace
+
+    def replace_teimoso(origem, alvo):
+        chamadas["n"] += 1
+        if chamadas["n"] < 3:
+            raise PermissionError("Acesso negado")
+        return replace_real(origem, alvo)
+
+    monkeypatch.setattr(ckp.os, "replace", replace_teimoso)
+    monkeypatch.setattr(ckp.time, "sleep", lambda _s: None)
+
+    ckp.salvar_checkpoint(str(destino), {"status": "processando"})
+
+    assert chamadas["n"] == 3
+    gravado = json.loads(destino.read_text(encoding="utf-8"))
+    assert gravado["status"] == "processando"
+
+
+def test_checkpoint_falls_back_to_direct_write(tmp_path, monkeypatch):
+    """Se a troca atomica nunca liberar, ainda assim grava o progresso."""
+    destino = tmp_path / "checkpoint.json"
+    monkeypatch.setattr(ckp.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(ckp.time, "sleep", lambda _s: None)
+
+    ckp.salvar_checkpoint(str(destino), {"status": "processando"}, tentativas=2)
+
+    gravado = json.loads(destino.read_text(encoding="utf-8"))
+    assert gravado["status"] == "processando"

@@ -5,6 +5,7 @@ import re
 import json
 import os
 import shutil
+import time
 import subprocess
 from datetime import datetime
 
@@ -68,8 +69,15 @@ def carregar_checkpoint(caminho):
         return None
 
 
-def salvar_checkpoint(caminho, dados):
-    """Grava de forma atomica para sobreviver a fechamento e falta de energia."""
+def salvar_checkpoint(caminho, dados, tentativas=6):
+    """Grava de forma atomica para sobreviver a fechamento e falta de energia.
+
+    No Windows o `os.replace` falha com "Acesso negado" quando antivirus,
+    indexador ou outro processo esta com o arquivo aberto por um instante.
+    Isso derrubou um processamento de 56 clipes no meio, com 45 ja prontos.
+    Como e transitorio, vale reentar antes de desistir: perder o checkpoint
+    custa muito mais caro que esperar meio segundo.
+    """
     os.makedirs(os.path.dirname(caminho), exist_ok=True)
     dados["atualizado_em"] = _agora()
     temporario = f"{caminho}.tmp"
@@ -77,7 +85,25 @@ def salvar_checkpoint(caminho, dados):
         json.dump(dados, arquivo, ensure_ascii=False, indent=2)
         arquivo.flush()
         os.fsync(arquivo.fileno())
-    os.replace(temporario, caminho)
+
+    espera = 0.1
+    for tentativa in range(1, tentativas + 1):
+        try:
+            os.replace(temporario, caminho)
+            return
+        except PermissionError:
+            if tentativa == tentativas:
+                # Ultimo recurso: grava direto, sem a troca atomica. Um
+                # checkpoint possivelmente truncado ainda e melhor que
+                # nenhum — o log e a validacao de midia cobrem o resto.
+                try:
+                    with open(caminho, "w", encoding="utf-8") as arquivo:
+                        json.dump(dados, arquivo, ensure_ascii=False, indent=2)
+                    return
+                except OSError:
+                    raise
+            time.sleep(espera)
+            espera = min(espera * 2, 2.0)
 
 
 def resultado_valido(resultado):
