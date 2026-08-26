@@ -90,6 +90,16 @@ MAX_AMOSTRAS_POR_CENA = 400  # teto de seguranca para cenas muito longas
 # Dividir o shot para nao cortar ninguem gera mais blocos; o grafo do
 # FFmpeg da conta de bem mais que os 50 originais.
 LIMITE_SHOTS_FFMPEG = 200
+
+# Camera virtual: quanto o quadro persegue a pessoa a cada nova leitura e
+# qual a velocidade maxima de deslocamento (em larguras de quadro por
+# segundo). Valores altos tremem; baixos ficam para tras e cortam.
+FATOR_SUAVIZACAO_CAMERA = 0.45
+VELOCIDADE_MAXIMA_CAMERA = 0.25
+MAX_PONTOS_TRAJETORIA = 60  # teto por shot, para a expressao nao explodir
+# Salto de posicao que so um corte de camera explica. Abaixo disso o quadro
+# acompanha; acima, corta seco.
+SALTO_MAXIMO_MESMA_CAMERA = 0.12
 LIMIAR_MUDANCA_PLANO_ZOOM = 1.35
 
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
@@ -716,22 +726,33 @@ def _ajustar_segmentos_pelos_frames(
                 plano["xa"] = plano["xb"] = (min(xs) + max(xs)) / 2.0
                 plano["ya"] = plano["yb"] = float(np.median([p[2] for p in grupo]))
                 plano["ta"] = plano["tb"] = max(p[3] for p in grupo)
+                trajetoria = _suavizar_trajetoria(grupo, fps)
+                if len(trajetoria) > MAX_PONTOS_TRAJETORIA:
+                    passo = len(trajetoria) // MAX_PONTOS_TRAJETORIA + 1
+                    trajetoria = trajetoria[::passo] + [trajetoria[-1]]
                 return {
                     **seg,
                     "plano": plano,
+                    "trajetoria": trajetoria,
                     "frame_ini": p_ini,
                     "frame_fim": p_fim,
                     "start_s": p_ini / fps,
                     "end_s": p_fim / fps,
+                    "fps": fps,
                 }
 
-            # Acumula enquanto tudo couber; quebra quando deixar de caber.
+            # Acumula enquanto for a MESMA camera. Deslocamento dentro do
+            # plano nao quebra mais o shot: o quadro acompanha a pessoa pela
+            # trajetoria. So um salto brusco (corte de camera que passou
+            # despercebido) justifica um corte seco.
             grupo = [posicoes[0]]
             inicio_bloco = ini
-            for posicao in posicoes[1:]:
-                xs = [p[1] for p in grupo] + [posicao[1]]
-                maior_w = max(max(p[3] for p in grupo), posicao[3])
-                if _cabe_no_mesmo_crop(xs, maior_w, largura_crop):
+            for anterior, posicao in zip(posicoes, posicoes[1:]):
+                salto = abs(posicao[1] - anterior[1])
+                mudou_zoom = _mudou_de_zoom(
+                    (anterior[1], anterior[3]), (posicao[1], posicao[3])
+                )
+                if salto <= SALTO_MAXIMO_MESMA_CAMERA and not mudou_zoom:
                     grupo.append(posicao)
                     continue
                 ajustados.append(_shot(inicio_bloco, posicao[0], grupo))
@@ -746,6 +767,58 @@ def _ajustar_segmentos_pelos_frames(
             _fechar_detector(detector)
 
     return ajustados
+
+
+def _suavizar_trajetoria(posicoes: list, fps: float) -> list:
+    """Transforma posicoes observadas numa trajetoria estavel de camera.
+
+    Duas coisas importam aqui: nao tremer (o rosto oscila alguns pixels entre
+    deteccoes) e nao ficar para tras quando a pessoa se desloca de verdade.
+    Uma media exponencial resolve o tremor; o limite de velocidade impede
+    que o quadro dispare atras de uma deteccao isolada e errada.
+    """
+    if not posicoes:
+        return []
+
+    suave = []
+    atual = posicoes[0][1]
+    for quadro, x, _y, _w in posicoes:
+        alvo = float(x)
+        atual += (alvo - atual) * FATOR_SUAVIZACAO_CAMERA
+        if suave:
+            quadros = max(1, quadro - suave[-1][0])
+            limite = VELOCIDADE_MAXIMA_CAMERA * quadros / max(1.0, fps)
+            anterior = suave[-1][1]
+            atual = max(anterior - limite, min(anterior + limite, atual))
+        suave.append((quadro, atual))
+    return suave
+
+
+def _expressao_crop_x(trajetoria: list, largura: int, crop_w: int,
+                      fps: float, inicio_frame: int) -> str:
+    """Expressao de tempo para o filtro crop do FFmpeg.
+
+    Permite que o quadro acompanhe a pessoa dentro do mesmo shot, em vez de
+    ficar preso num ponto fixo. Sem isso, qualquer deslocamento maior que a
+    folga do quadro corta a pessoa — e num podcast ela se mexe o tempo todo.
+    """
+    if len(trajetoria) < 2:
+        return None
+
+    limite = max(0, largura - crop_w)
+    pontos = []
+    for quadro, x in trajetoria:
+        tempo = max(0.0, (quadro - inicio_frame) / max(1.0, fps))
+        posicao = int(round(x * largura - crop_w / 2.0))
+        pontos.append((tempo, max(0, min(limite, posicao))))
+
+    # Interpolacao linear encadeada: entre dois pontos-chave o quadro desliza.
+    expressao = f"{pontos[-1][1]}"
+    for (t0, x0), (t1, x1) in reversed(list(zip(pontos, pontos[1:]))):
+        duracao = max(1e-3, t1 - t0)
+        trecho = f"{x0}+({x1}-{x0})*(t-{t0:.3f})/{duracao:.3f}"
+        expressao = f"if(lt(t,{t1:.3f}),{trecho},{expressao})"
+    return expressao
 
 
 def _calcular_filtros_shot(
@@ -883,7 +956,12 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
             sw, sh = shot["scale"]
-            return f"[0:v]crop={w}:{h}:{x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[vout]"
+            expressao = _expressao_crop_x(
+                segmentos[0].get("trajetoria") or [], largura, w,
+                segmentos[0].get("fps", 30.0), segmentos[0].get("frame_ini", 0),
+            )
+            posicao_x = f"'{expressao}'" if expressao else f"{x}"
+            return f"[0:v]crop={w}:{h}:{posicao_x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[vout]"
         else:
             tx, ty, tw, th = shot["top_crop"]
             tsw, tsh = shot["top_scale"]
@@ -908,9 +986,16 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
             sw, sh = shot["scale"]
+            # O trim reinicia o relogio do shot, entao a expressao usa tempo
+            # relativo ao proprio shot.
+            expressao = _expressao_crop_x(
+                seg.get("trajetoria") or [], largura, w,
+                seg.get("fps", 30.0), seg.get("frame_ini", 0),
+            )
+            posicao_x = f"'{expressao}'" if expressao else f"{x}"
             linhas.append(
                 f"[in{k}]trim=start={start_s:.3f}:end={end_s:.3f},setpts=PTS-STARTPTS,"
-                f"crop={w}:{h}:{x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[v{k}]"
+                f"crop={w}:{h}:{posicao_x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[v{k}]"
             )
         else:
             tx, ty, tw, th = shot["top_crop"]
@@ -1059,7 +1144,9 @@ def _renderizar_enquadramento_pipe(
         else:
             p = plano[-1] if plano else {"modo": "CENTRAL", "xa": 0.5, "xb": 0.5}
 
-        frame_final = _compor_frame_seguro(frame, p, saida_w, saida_h, relatorio=relatorio)
+        frame_final = _compor_frame_seguro(
+            frame, p, saida_w, saida_h, relatorio=relatorio
+        )
 
         try:
             processo_ffmpeg.stdin.write(frame_final.tobytes())
