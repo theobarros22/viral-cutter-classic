@@ -161,3 +161,37 @@ precisa existir na pasta e passar por `resultado_valido` (FFprobe). Ordem das
 fontes em `inspecionar_retomada`: checkpoint > log > varredura da pasta.
 Verificado no trabalho real do Papo Reto #60: apagando o checkpoint, o log
 recupera os 10 clipes prontos e a producao retoma no clipe 11 de 56.
+
+
+## Revisao de 26/08/2026 — o que realmente resolveu
+
+A secao anterior descrevia a regra como validacao de crop estatico. Isso
+estava incompleto e por isso o defeito sobreviveu a varias correcoes.
+
+**Causa raiz:** num 9:16 sobre fonte 16:9 o crop mostra 31,7% da largura e a
+cabeca ocupa 22% — sobram ~7% de folga. Num podcast a pessoa se desloca mais
+que isso o tempo todo, entao um crop PARADO nao tem como nao cortar. O
+problema nunca foi calibracao de limiar; era geometrico.
+
+**Correcoes, em ordem de impacto:**
+
+1. O quadro acompanha a pessoa dentro do shot, por expressao de tempo no
+   filtro `crop` do FFmpeg (roda no motor rapido).
+2. O alvo de cada shot e reancorado nos rostos reais do proprio intervalo.
+   Antes a validacao conferia o crop contra o ALVO calculado — com alvo
+   errado, aprovava um quadro que cortava a pessoa.
+3. Amostragem por tempo (0,8s) no lugar de 25 amostras por cena, que davam
+   uma a cada 6s em cenas longas e perdiam trocas de camera inteiras.
+4. Ordem de preferencia explicita: crop fechado centralizado -> paineis
+   empilhados -> quadro aberto. O status `revisar` deixou de ser usado como
+   degradacao: havendo enquadramento seguro e apresentavel, entrega-se ele.
+
+**Medicao:** auditoria com deteccao facial em 20 frames de cada clipe, sobre
+os 56 clipes do Papo Reto #60. Contagem automatica de 37 para 15, e os 15
+restantes inspecionados um a um mostraram enquadramento correto — o detector
+reporta falso positivo em quadro vertical (rosto de ~48% da largura comecando
+na borda). Os cortes reais, de 10 a 21% da cabeca fora, desapareceram.
+
+**Cuidado ao medir:** num plano com duas pessoas, enquadrar uma corta a outra
+na borda. Isso e inevitavel e nao e defeito. So conta como falha o sujeito
+principal aparecer cortado.

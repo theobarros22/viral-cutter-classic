@@ -53,6 +53,54 @@ iniciar.bat
 
 ## A regra do enquadramento — não afrouxe sem ler
 
+**Ordem de preferência**, definida com exemplos reais e validada nos clipes
+do Papo Reto #60:
+
+1. **Crop fechado com a pessoa centralizada** — o ideal. Cabeça inteira,
+   folga em cima, plano médio.
+2. **Dois painéis horizontais empilhados** — aceitável. Mostra tudo e nunca
+   corta ninguém.
+3. **Quadro aberto** — na dúvida. Usa a altura inteira da fonte, centraliza
+   nas pessoas e não aperta o enquadramento.
+
+O único resultado proibido é entregar a **pessoa principal cortada**.
+
+### A câmera acompanha a pessoa
+
+Esta é a parte que resolveu o problema, e o motivo é geométrico: num 9:16
+sobre fonte 16:9 o quadro mostra **31,7% da largura** e a cabeça ocupa
+**22%** — sobram ~7% de folga. Num podcast a pessoa gesticula e se inclina
+mais que isso o tempo todo, então **um crop parado é matematicamente
+incapaz de não cortar**. Nenhum ajuste de agrupamento resolve isso.
+
+O quadro segue a pessoa dentro do shot via expressão de tempo no filtro
+`crop` do FFmpeg — o filtro aceita, então isso roda no motor rápido, sem
+cair no renderizador por pipe. A trajetória usa média exponencial contra
+tremor e limite de velocidade para não disparar atrás de uma detecção
+isolada errada.
+
+Se for mexer aqui: o alvo de cada shot é **reancorado nos rostos reais** do
+próprio intervalo (`_ajustar_segmentos_pelos_frames`). Isso existe porque o
+resto do cálculo trabalha com medianas de amostras, e a validação conferia o
+crop contra o **alvo** — nunca contra o frame. Com alvo errado, ela aprovava
+com confiança um quadro que cortava a pessoa. Foi o bug que mais custou tempo
+neste projeto.
+
+### Como verificar de verdade
+
+A suíte de testes **não pega problema visual**. O que pega é auditar os
+clipes exportados com detecção facial em vários frames de cada um. Dois
+cuidados aprendidos na prática:
+
+- num plano com duas pessoas, enquadrar uma **corta a outra** na borda: isso
+  é inevitável e não é defeito. Só conta como falha o **sujeito principal**
+  aparecer cortado;
+- o detector produz falsos positivos em quadro vertical — um "rosto"
+  ocupando quase metade da largura começando exatamente na borda é detecção
+  espúria, não corte. **Abra o frame antes de acreditar no número.**
+
+
+
 Esta é a parte mais sensível do programa, e a que mais gerou retrabalho.
 A regra é **invariante**: qualquer mudança precisa manter as quatro garantias
 abaixo, todas cobertas por `tests/test_enquadramento_seguro.py`.

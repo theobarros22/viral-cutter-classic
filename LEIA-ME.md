@@ -75,12 +75,17 @@ Pode fechar o programa, faltar energia, dar erro no meio: **nada se perde.**
 Ao reabrir e apontar o mesmo vídeo, ele mostra quantos clipes já estão prontos
 e continua do primeiro pendente. Não refaz o que já ficou bom.
 
-### Clipes marcados como "revisar"
+### Como o programa decide o enquadramento
 
-Se um clipe aparecer marcado assim, não é erro. Significa que o programa não
-achou nenhum jeito de enquadrar aquela cena sem cortar a pessoa, e preferiu
-avisar a entregar um quadro ruim. O log diz o motivo **e em que segundo**
-acontece — vá direto nesse ponto do clipe para julgar.
+O quadro **acompanha a pessoa** enquanto ela se mexe, como um operador de
+câmera. A ordem de preferência é:
+
+1. crop fechado com a pessoa centralizada — o normal;
+2. dois painéis horizontais empilhados, quando as pessoas não cabem juntas;
+3. quadro aberto, na dúvida.
+
+Nunca entrega a pessoa principal cortada. Se um trecho aparecer em painéis
+ou em plano aberto, foi escolha deliberada do programa, não falha.
 
 ---
 
