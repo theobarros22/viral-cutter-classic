@@ -1,4 +1,4 @@
-"""Checagem rápida do ambiente antes de abrir ou empacotar o Viral Cutter."""
+﻿"""Checagem rápida do ambiente antes de abrir ou empacotar o Viral Cutter."""
 
 import importlib.util
 import importlib
@@ -9,6 +9,16 @@ from runtime import configurar_ambiente, pasta_dados, pasta_base
 
 
 MODULOS = ("cv2", "mediapipe", "numpy", "torch", "whisper", "gradio", "anthropic", "pydub")
+
+# Pacotes opcionais com fallback silencioso: o app funciona sem eles, so que
+# mais devagar ou com menos recurso. Sem este aviso a perda fica invisivel --
+# faster-whisper esteve declarado no requirements por dois meses sem estar
+# instalado, e a transcricao rodou 2,4x mais lenta o tempo todo sem avisar.
+MODULOS_DESEMPENHO = {
+    "faster_whisper": "transcricao 2,4x mais lenta (medido em RTX 3050)",
+    "scenedetect": "sem deteccao de corte de cena",
+    "yt_dlp": "sem download direto de video por link",
+}
 
 
 def executar_diagnostico() -> bool:
@@ -27,6 +37,10 @@ def executar_diagnostico() -> bool:
             importlib.import_module(nome)
         except Exception as erro:
             problemas.append(f"Pacote não consegue iniciar: {nome} ({erro})")
+
+    for nome, custo in MODULOS_DESEMPENHO.items():
+        if importlib.util.find_spec(nome) is None:
+            avisos.append(f"Pacote de desempenho ausente: {nome} -- {custo}")
 
     for programa in ("ffmpeg", "ffprobe"):
         if shutil.which(programa) is None:
