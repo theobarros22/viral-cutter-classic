@@ -24,16 +24,8 @@ logger = logging.getLogger("CoreEngine")
 
 def _localizar_ffmpeg():
     """Localiza a presença do executável FFmpeg no sistema ou pasta local."""
-    import shutil
-    candidatos = [
-        shutil.which("ffmpeg"),
-        r"D:\CORTE VIRAL\files\tools\ffmpeg.exe",
-        r"D:\CORTE VIRAL\tools\ffmpeg.exe",
-    ]
-    for c in candidatos:
-        if c and os.path.exists(c):
-            return c
-    return "ffmpeg"  # Fallback para PATH global
+    from ffmpeg_utils import localizar_ffmpeg
+    return localizar_ffmpeg()
 
 FFMPEG_PATH = _localizar_ffmpeg()
 
@@ -292,7 +284,7 @@ def auto_framing(video_path: str, output_path: str) -> bool:
         from mediapipe.tasks.python import vision as mp_vision
         
         # Localiza o modelo facial tflite
-        modelo_path = r"D:\CORTE VIRAL\files\face_detector.tflite"
+        modelo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_detector.tflite")
         base_options = mp_python.BaseOptions(model_asset_path=modelo_path)
         options = mp_vision.FaceDetectorOptions(
             base_options=base_options,
@@ -541,7 +533,7 @@ def apply_3d_text_mask(video_path: str, ass_path: str, output_path: str) -> bool
         from mediapipe.tasks.python import vision as mp_vision
         
         # Download model if not exists
-        modelo_path = r"D:\CORTE VIRAL\files\selfie_segmenter.tflite"
+        modelo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selfie_segmenter.tflite")
         if not os.path.exists(modelo_path):
             import urllib.request
             logger.info("Baixando modelo selfie segmenter para máscara 3D...")
@@ -812,7 +804,7 @@ def compile_ai_edit_to_ffmpeg(video_path: str, json_ai_processed: list, output_p
             shutil.copy2(video_path, path_temp_jc)
             
         # 2. Configura detector facial para enquadramento e zoom dinâmico
-        modelo_path = r"D:\CORTE VIRAL\files\face_detector.tflite"
+        modelo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_detector.tflite")
         base_options = mp_python.BaseOptions(model_asset_path=modelo_path)
         options = mp_vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=0.35)
         detector = mp_vision.FaceDetector.create_from_options(options)

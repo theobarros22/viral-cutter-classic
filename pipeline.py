@@ -39,12 +39,20 @@ def _pasta_estado() -> str:
 
 def _persistir_estado(caminho_video: str) -> None:
     """Grava pessoas, transcricao e segmentos para a retomada nao re-transcrever."""
-    from checkpoint import salvar_estado_analise
+    from checkpoint import salvar_estado_analise, carregar_estado_analise
     try:
+        # Nunca apagar com vazio o que ja esta no disco. A etapa 1 persiste com
+        # o cache recem-criado: numa sessao nova, so detectar pessoas zerava a
+        # transcricao e os segmentos de uma analise que levou meia hora — e o
+        # proximo processamento tinha de transcrever tudo de novo.
+        try:
+            salvo = carregar_estado_analise(_pasta_estado(), caminho_video) or {}
+        except (OSError, ValueError):
+            salvo = {}
         salvar_estado_analise(_pasta_estado(), caminho_video, {
-            "pessoas": _cache.get("pessoas") or [],
-            "transcricao": _cache.get("transcricao"),
-            "segmentos": _cache.get("segmentos") or [],
+            "pessoas": _cache.get("pessoas") or salvo.get("pessoas") or [],
+            "transcricao": _cache.get("transcricao") or salvo.get("transcricao"),
+            "segmentos": _cache.get("segmentos") or salvo.get("segmentos") or [],
         })
     except (OSError, ValueError, ImportError):
         # Persistir e uma otimizacao de retomada: falhar aqui nunca derruba
@@ -71,9 +79,16 @@ def restaurar_estado_analise(caminho_video: str) -> dict:
     reaproveitado = {}
     for chave in ("pessoas", "transcricao", "segmentos"):
         valor = dados.get(chave)
-        if valor:
-            _cache[chave] = valor
-            reaproveitado[chave] = len(valor) if isinstance(valor, (list, dict)) else 1
+        if not valor:
+            continue
+        # O que ja esta em memoria veio desta sessao e e mais novo que o disco.
+        # Sobrescrever apagava, por exemplo, uma deteccao de pessoas refeita
+        # agora mesmo — e a deteccao de fala voltava a trabalhar com os dados
+        # antigos, sem perceber. Disco preenche lacuna, nao substitui.
+        if _cache.get(chave):
+            continue
+        _cache[chave] = valor
+        reaproveitado[chave] = len(valor) if isinstance(valor, (list, dict)) else 1
     if reaproveitado:
         _cache["caminho_video"] = caminho_video
     return reaproveitado

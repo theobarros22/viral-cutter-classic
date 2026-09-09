@@ -57,6 +57,10 @@ LIMIAR_CORTE_CENA = 28.0
 
 # Duração mínima de uma cena (cenas menores são fundidas com a anterior)
 DURACAO_MINIMA_CENA = 0.5  # segundos
+# Duracao minima de um shot de enquadramento. Abaixo disso a troca de recorte
+# nao le como escolha de camera, le como falha: o quadro pula. Medido no
+# material real, o plano trocava a cada 0.79s (o intervalo de amostragem).
+DURACAO_MINIMA_SHOT = 1.2
 
 # Quantos frames analisar por cena para achar os rostos
 AMOSTRAS_POR_CENA = 10
@@ -97,10 +101,19 @@ LIMITE_SHOTS_FFMPEG = 200
 FATOR_SUAVIZACAO_CAMERA = 0.45
 VELOCIDADE_MAXIMA_CAMERA = 0.25
 MAX_PONTOS_TRAJETORIA = 60  # teto por shot, para a expressao nao explodir
+# Quanto a camera pode se afastar do alvo do shot ao acompanhar a pessoa.
+# Acima disso ja nao e a mesma pessoa se mexendo: e o quadro indo embora.
+DESVIO_MAXIMO_TRAJETORIA = 0.08
 # Salto de posicao que so um corte de camera explica. Abaixo disso o quadro
 # acompanha; acima, corta seco.
 SALTO_MAXIMO_MESMA_CAMERA = 0.12
 LIMIAR_MUDANCA_PLANO_ZOOM = 1.35
+# Reancorar so pode ajustar o alvo, nunca trocar de pessoa. Acima desta
+# distancia normalizada o rosto detectado e o outro participante.
+DISTANCIA_MAXIMA_REANCORA = 0.20
+# Fracao de cada lado do crop que NAO conta como "pessoa enquadrada". Rosto
+# fora dessa faixa central esta espremido na borda, com o resto do quadro vazio.
+FAIXA_CENTRAL_MINIMA = 0.15
 
 # Zona vertical onde ficam as CABEÇAS de quem está sentado num podcast.
 # Falsos positivos do cenário caem fora dela: TV/quadros na parede e
@@ -118,7 +131,9 @@ ZONA_ROSTO_Y_MAX = 0.72
 # pequeno (plano aberto) → zoom forte; rosto grande (câmera fechada) →
 # quadro inteiro. O resultado parece direção de câmera, não recorte.
 FATOR_ZOOM_ROSTO = 4.5    # altura do crop ≈ 4.5x a largura do rosto (px)
-ZOOM_MIN_ALTURA = 0.50    # nunca fecha mais que 50% da altura (qualidade)
+# Teto conservador: fecha o suficiente para a pessoa dominar o quadro, mas
+# nunca a ponto de decepar gesto de mão, que neste tipo de conversa é constante.
+ZOOM_MIN_ALTURA = 0.70    # nunca fecha mais que 70% da altura da fonte
 POSICAO_ROSTO_QUADRO = 0.40  # rosto a 40% do topo do quadro (regra dos terços)
 # A janela horizontal precisa comportar mais que o rosto: em planos de
 # podcast a pessoa se inclina, gesticula e pode estar parcialmente fora do
@@ -190,6 +205,53 @@ def _classificar_modos_fala(
     return modos
 
 
+def _alvos_seguindo_falante(posicoes: list, x_cena: float, fps: float,
+                            limiar_s: float = 1.5, distancia: float = 0.20) -> list:
+    """Alvo por frame numa cena onde o detector só enxergou uma pessoa.
+
+    Fica em ``x_cena`` — a pessoa que a cena viu — e só migra para onde a
+    detecção de fala aponta quando ela insiste por ``limiar_s`` seguidos e
+    longe o bastante para ser outra pessoa, não a mesma se mexendo. Voltar
+    exige a mesma insistência, senão o quadro pinga entre as duas.
+    """
+    total = len(posicoes)
+    if total == 0:
+        return []
+
+    x_cena = float(x_cena)
+    minimo = max(1, int(round(float(fps or 30.0) * limiar_s)))
+
+    # Se o sinal de fala ja discorda da cena no primeiro instante, comecar em
+    # x_cena significa abrir o clipe apontando para o lugar errado por 1,5s.
+    # A histerese existe para evitar troca nervosa no meio de uma cena, nao
+    # para impor um comeco errado — aqui nao ha nada anterior a preservar.
+    primeiro = next((float(p) for p in posicoes if p is not None), None)
+    alvos = []
+    atual = x_cena
+    if primeiro is not None and abs(primeiro - x_cena) > distancia:
+        atual = primeiro
+    candidato = None
+    seguidos = 0
+    # A deteccao de fala so preenche 1 frame a cada ~15; o resto vem None. Se o
+    # None interrompesse a contagem, a espera de 1,5s viraria 22s na pratica e o
+    # alvo nunca migraria dentro de um clipe. O None significa "nada mudou",
+    # entao ele SUSTENTA o ultimo desejo e deixa o relogio correr.
+    desejado = x_cena
+    for pos in posicoes:
+        if pos is not None:
+            pos = float(pos)
+            desejado = pos if abs(pos - x_cena) > distancia else x_cena
+        if candidato is not None and abs(desejado - candidato) <= distancia / 2.0:
+            seguidos += 1
+        else:
+            candidato = desejado
+            seguidos = 1
+        if seguidos >= minimo and abs(desejado - atual) > distancia / 2.0:
+            atual = desejado
+        alvos.append(atual)
+    return alvos
+
+
 def _calcular_crop_seguro(
     alvos: list,
     largura: int,
@@ -206,9 +268,21 @@ def _calcular_crop_seguro(
     centro_x = float(np.mean(centros_x))
     esquerda_humana = min(cx - maior_rosto * 1.6 for cx in centros_x)
     direita_humana = max(cx + maior_rosto * 1.6 for cx in centros_x)
-    # O usuário prioriza enquadramento aberto: em fonte horizontal o crop
-    # usa toda a altura disponível, sem zoom adicional no rosto.
-    largura_desejada = largura_max
+    # A janela é dimensionada pelo TAMANHO do rosto, não por fração fixa do
+    # quadro: em plano aberto ela fecha, em close quase não mexe. Usar a altura
+    # inteira sempre deixava a pessoa pequena no meio da parede.
+    altura_desejada = max(
+        maior_rosto * FATOR_ZOOM_ROSTO,
+        float(altura) * ZOOM_MIN_ALTURA,
+    )
+    largura_desejada = altura_desejada * float(proporcao)
+    # Mas a janela precisa caber todo mundo que ela deve enquadrar, com a folga
+    # lateral — senão fechar o quadro passa a cortar quem está na ponta.
+    largura_desejada = max(
+        largura_desejada,
+        direita_humana - esquerda_humana,
+        maior_rosto * FOLGA_HORIZONTAL_ROSTO,
+    )
     crop_w = int(round(min(largura_max, largura_desejada)))
     crop_w = max(2, crop_w + crop_w % 2)
     crop_h = int(round(crop_w / float(proporcao)))
@@ -550,6 +624,9 @@ def aplicar_enquadramento(
 
     # ── Passo 4: Renderização de Alta Performance (FFmpeg direto ou Pipe Fallback)
     segmentos = _agrupar_planos_em_segmentos(plano, fps)
+    # Funde antes de reancorar: com o shot ja no tamanho final, a reancoragem
+    # calcula o alvo sobre a janela inteira, e nao sobre um piscar de 0.8s.
+    segmentos = _fundir_shots_curtos(segmentos, fps)
     # Reancora cada shot no que realmente aparece no video naquele intervalo,
     # reaproveitando as amostras densas ja coletadas pela analise de cena.
     mapa_amostras = {
@@ -560,6 +637,11 @@ def aplicar_enquadramento(
     segmentos = _ajustar_segmentos_pelos_frames(
         caminho_entrada, segmentos, largura, altura, fps, mapa_amostras
     )
+    # A reancoragem divide o shot quando as posicoes observadas nao cabem num
+    # crop unico — necessario para nao cortar ninguem, mas produz lascas de
+    # fracao de segundo que na tela leem como falha, nao como corte. Funde de
+    # novo: a primeira fusao acontece antes e nao alcanca estas.
+    segmentos = _fundir_shots_curtos(segmentos, fps)
 
     # Render rápido quando o plano é composto por blocos estáveis (<= 50 shots)
     if segmentos and len(segmentos) <= LIMITE_SHOTS_FFMPEG:
@@ -643,6 +725,59 @@ def _agrupar_planos_em_segmentos(plano: list, fps: float) -> list:
     return segmentos
 
 
+def _fundir_shots_curtos(segmentos: list, fps: float,
+                          minimo_s: float = DURACAO_MINIMA_SHOT) -> list:
+    """Absorve shots curtos demais no shot anterior.
+
+    O plano é recalculado a cada amostra da análise (uma a cada 0,8s), então
+    qualquer oscilação pequena vira um shot novo. Cada troca de shot muda o
+    recorte de uma vez — e uma sequência de shots de 0,8s alternando entre
+    quadro fechado e painéis lê como zoom pulando na cara do espectador.
+    Uma troca precisa durar o suficiente para ser lida como escolha de câmera.
+    """
+    if not segmentos:
+        return []
+
+    def _alvo(seg):
+        plano = seg.get("plano") or {}
+        chave = "xb" if plano.get("modo") == "SOLO_B" else "xa"
+        return float(plano.get(chave, 0.5))
+
+    fundidos = [dict(segmentos[0])]
+    for seg in segmentos[1:]:
+        anterior = fundidos[-1]
+        duracao_anterior = anterior["end_s"] - anterior["start_s"]
+        # Fundir serve para tirar tremor entre enquadramentos parecidos, nao
+        # para apagar uma troca de camera. Quando os alvos estao longe um do
+        # outro, o corte e real: absorver importava o alvo da cena errada e o
+        # quadro caia na parede durante o close — medido em 39s de um clipe.
+        if abs(_alvo(anterior) - _alvo(seg)) > DISTANCIA_MAXIMA_REANCORA:
+            fundidos.append(dict(seg))
+            continue
+        if duracao_anterior < minimo_s:
+            # O anterior é curto demais para valer um corte: o shot atual
+            # toma o lugar dele, herdando o intervalo inteiro.
+            anterior.update({
+                "chave": seg["chave"],
+                "plano": seg["plano"],
+                "frame_fim": seg["frame_fim"],
+                "end_s": seg["end_s"],
+            })
+            continue
+        fundidos.append(dict(seg))
+
+    # O último shot também precisa de corpo; sem isso sobra um piscar no fim.
+    if len(fundidos) > 1:
+        ultimo = fundidos[-1]
+        if (ultimo["end_s"] - ultimo["start_s"]) < minimo_s:
+            anterior = fundidos[-2]
+            anterior["frame_fim"] = ultimo["frame_fim"]
+            anterior["end_s"] = ultimo["end_s"]
+            fundidos.pop()
+
+    return fundidos
+
+
 def _ajustar_segmentos_pelos_frames(
     caminho_video: str, segmentos: list, largura: int, altura: int, fps: float,
     amostras_por_frame: dict = None,
@@ -668,7 +803,33 @@ def _ajustar_segmentos_pelos_frames(
     detector = None
     cap = None
 
-    def _posicoes_do_intervalo(ini_frame, fim_frame):
+    def _escolher_rosto(rostos, alvo_x):
+        """Escolhe o rosto que o plano quer mostrar, nao o maior da cena.
+
+        Pegar o maior ignorava quem estava falando: no plano aberto as duas
+        pessoas tem praticamente o mesmo tamanho (medido: 0.062 e 0.064), entao
+        a escolha virava sorteio — e o quadro passou 11s na pessoa calada
+        enquanto a outra falava. O alvo do plano ja vem da deteccao de fala;
+        reancorar tem de corrigir a POSICAO dele, nao trocar de pessoa.
+        """
+        if alvo_x is None:
+            return max(rostos, key=lambda r: r["w"])
+        perto = min(rostos, key=lambda r: abs(float(r["x"]) - float(alvo_x)))
+        # A regra e o rosto no centro do quadro. Mas "o rosto detectado" nem
+        # sempre e rosto: o logo da parede e detectado de forma consistente e
+        # sobrevive ao filtro de nitidez, por estar em foco. Centralizar nele
+        # cortava a pessoa na borda nos primeiros segundos de um clipe.
+        #
+        # O que separa os dois casos e a distancia ate o alvo do falante:
+        # 0.42 de distancia nao e a mesma pessoa se mexendo na cadeira. Longe
+        # demais, a reancoragem se abstem e o alvo do falante prevalece — que
+        # e a informacao mais confiavel que temos, porque combina audio e
+        # movimento labial, nao so a forma no frame.
+        if abs(float(perto["x"]) - float(alvo_x)) > DISTANCIA_MAXIMA_REANCORA:
+            return None
+        return perto
+
+    def _posicoes_do_intervalo(ini_frame, fim_frame, alvo_x=None):
         encontradas = []
         for quadro in sorted(amostras_por_frame):
             if quadro < ini_frame:
@@ -680,15 +841,20 @@ def _ajustar_segmentos_pelos_frames(
                 if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
             ]
             if rostos:
-                maior = max(rostos, key=lambda r: r["w"])
-                encontradas.append((quadro, float(maior["x"]),
-                                    float(maior["y"]), float(maior["w"])))
+                escolhido = _escolher_rosto(rostos, alvo_x)
+                if escolhido is not None:
+                    encontradas.append((quadro, float(escolhido["x"]),
+                                        float(escolhido["y"]), float(escolhido["w"])))
         return encontradas
 
     try:
         for seg in segmentos:
             ini, fim = seg["frame_ini"], seg["frame_fim"]
-            posicoes = _posicoes_do_intervalo(ini, fim)
+            _modo_seg = seg["plano"].get("modo", "SOLO_A")
+            _alvo_x = seg["plano"].get("xb" if _modo_seg == "SOLO_B" else "xa")
+            if _modo_seg not in ("SOLO_A", "SOLO_B"):
+                _alvo_x = None
+            posicoes = _posicoes_do_intervalo(ini, fim, _alvo_x)
 
             if not posicoes:
                 # Shot curto entre duas amostras: le o proprio video.
@@ -707,9 +873,10 @@ def _ajustar_segmentos_pelos_frames(
                             if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
                         ]
                         if rostos:
-                            maior = max(rostos, key=lambda r: r["w"])
-                            posicoes = [(meio, float(maior["x"]),
-                                         float(maior["y"]), float(maior["w"]))]
+                            escolhido = _escolher_rosto(rostos, _alvo_x)
+                            if escolhido is not None:
+                                posicoes = [(meio, float(escolhido["x"]),
+                                             float(escolhido["y"]), float(escolhido["w"]))]
 
             if not posicoes:
                 ajustados.append(seg)
@@ -729,7 +896,13 @@ def _ajustar_segmentos_pelos_frames(
             def _shot(p_ini, p_fim, grupo):
                 xs = [p[1] for p in grupo]
                 plano = dict(seg["plano"])
-                plano["xa"] = plano["xb"] = (min(xs) + max(xs)) / 2.0
+                # Mediana, nao o meio entre os extremos: quando a pessoa
+                # atravessa o quadro (entrando em cena, por exemplo), o ponto
+                # medio entre a primeira e a ultima posicao cai onde ela NUNCA
+                # esteve — medido na abertura de um clipe, o quadro parava no
+                # vao entre as duas cadeiras, so parede. A mediana fica onde
+                # ela de fato passa o tempo.
+                plano["xa"] = plano["xb"] = float(np.median(xs))
                 plano["ya"] = plano["yb"] = float(np.median([p[2] for p in grupo]))
                 plano["ta"] = plano["tb"] = max(p[3] for p in grupo)
                 trajetoria = _suavizar_trajetoria(grupo, fps)
@@ -831,20 +1004,40 @@ def _suavizar_trajetoria(posicoes: list, fps: float) -> list:
 
 
 def _expressao_crop_x(trajetoria: list, largura: int, crop_w: int,
-                      fps: float, inicio_frame: int) -> str:
+                      fps: float, inicio_frame: int, ancora: float = None) -> str:
     """Expressao de tempo para o filtro crop do FFmpeg.
 
     Permite que o quadro acompanhe a pessoa dentro do mesmo shot, em vez de
     ficar preso num ponto fixo. Sem isso, qualquer deslocamento maior que a
     folga do quadro corta a pessoa — e num podcast ela se mexe o tempo todo.
     """
+    # A camera parou de deslizar dentro do shot, de proposito.
+    #
+    # O crop estatico de cada shot e verificavel: o alvo sai da deteccao de
+    # fala, e a validacao confere contra os rostos do frame. Ja a expressao
+    # animada produzia, em pontos medidos, um quadro diferente do crop que ela
+    # declarava — aplicando o mesmo crop a mao a imagem saia certa, e pelo
+    # grafo saia parede. Com shots de ~3s e pessoas sentadas, o que se perde e
+    # micro-movimento; o que se ganha e o rosto sempre onde foi calculado.
+    return None
+
     if len(trajetoria) < 2:
         return None
 
     limite = max(0, largura - crop_w)
+    # A trajetoria existe para seguir a pessoa se mexendo dentro do shot, nao
+    # para levar o quadro a outro lugar da cena. A ancora e o ALVO VALIDADO do
+    # shot, nao o primeiro ponto observado: quando o shot comeca no fim de um
+    # plano aberto e segue num close, esse primeiro ponto vem da camera antiga
+    # e prendia o quadro na parede durante o close inteiro.
+    if ancora is None:
+        ancora = float(trajetoria[0][1])
+    ancora = float(ancora)
     pontos = []
     for quadro, x in trajetoria:
         tempo = max(0.0, (quadro - inicio_frame) / max(1.0, fps))
+        x = max(ancora - DESVIO_MAXIMO_TRAJETORIA,
+                min(ancora + DESVIO_MAXIMO_TRAJETORIA, float(x)))
         posicao = int(round(x * largura - crop_w / 2.0))
         pontos.append((tempo, max(0, min(limite, posicao))))
 
@@ -1035,9 +1228,12 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
         if shot["tipo"] == "solo":
             x, y, w, h = shot["crop"]
             sw, sh = shot["scale"]
+            plano_um = segmentos[0].get("plano") or {}
             expressao = _expressao_crop_x(
                 segmentos[0].get("trajetoria") or [], largura, w,
                 segmentos[0].get("fps", 30.0), segmentos[0].get("frame_ini", 0),
+                ancora=float(plano_um.get(
+                    "xb" if plano_um.get("modo") == "SOLO_B" else "xa", 0.5)),
             )
             posicao_x = f"'{expressao}'" if expressao else f"{x}"
             return f"[0:v]crop={w}:{h}:{posicao_x}:{y},scale={sw}:{sh}:flags=bilinear,setsar=1[vout]"
@@ -1070,6 +1266,8 @@ def _construir_grafo_enquadramento(segmentos: list, largura: int, altura: int, s
             expressao = _expressao_crop_x(
                 seg.get("trajetoria") or [], largura, w,
                 seg.get("fps", 30.0), seg.get("frame_ini", 0),
+                ancora=float((seg.get("plano") or {}).get(
+                    "xb" if (seg.get("plano") or {}).get("modo") == "SOLO_B" else "xa", 0.5)),
             )
             posicao_x = f"'{expressao}'" if expressao else f"{x}"
             linhas.append(
@@ -1467,7 +1665,13 @@ def _analisar_rostos_por_cena(
     - lado_a: posição X normalizada do lado esquerdo (ou da pessoa única)
     - lado_b: posição X normalizada do lado direito
     """
-    from rostos import _inicializar_detector, _fechar_detector, detectar_rostos_robusto
+    from rostos import (
+        _inicializar_detector,
+        _fechar_detector,
+        detectar_rostos_robusto,
+        refinar_caixa_rosto,
+        MIN_NITIDEZ_ROSTO,
+    )
 
     detector = _inicializar_detector()
     cap = cv2.VideoCapture(caminho_video)
@@ -1502,12 +1706,27 @@ def _analisar_rostos_por_cena(
                 ret, frame = cap.read()
                 if not ret:
                     continue
-                rostos = [
-                    r for r in detectar_rostos_robusto(frame, detector)
+                # A caixa crua da deteccao multiescala as vezes vem bem maior
+                # que o rosto, e aqui o TAMANHO do rosto decide o enquadramento:
+                # inflado, ele faz a cabeca "nao caber" no 9:16 e o layout cai
+                # para paineis abertos numa amostra e volta na seguinte — e o
+                # zoom pula. Refinar a caixa antes de medir resolve isso, e de
+                # quebra descarta parede e decoracao, que nao tem rosto dentro.
+                rostos = []
+                for bruto in detectar_rostos_robusto(frame, detector):
+                    refinado = refinar_caixa_rosto(frame, bruto, detector)
+                    if refinado is None:
+                        continue
+                    # O filtro de nitidez que existia aqui era remendo para os
+                    # falsos positivos do MediaPipe (o logo da parede virava
+                    # rosto). O YuNet nao detecta o logo, e a confianca dele ja
+                    # faz esse papel — enquanto o corte de nitidez descartava
+                    # rosto real borrado, que e o caso de alguem entrando em
+                    # cena. Era ele que apagava a apresentadora na abertura.
                     # Descarta rosto minusculo (TV, estatua, manequim) e rosto
                     # grande demais para ser real (falso positivo no cenario).
-                    if MIN_TAMANHO_ROSTO <= r.get("w", 0) <= MAX_TAMANHO_ROSTO
-                ]
+                    if MIN_TAMANHO_ROSTO <= refinado.get("w", 0) <= MAX_TAMANHO_ROSTO:
+                        rostos.append(refinado)
                 amostras.append((alvo, rostos))
 
         # Uma "cena" longa de podcast multicamera guarda varios enquadramentos
@@ -1714,14 +1933,34 @@ def _gerar_plano(cenas: list, posicoes_falante: list, fps: float, total_frames: 
             continue
 
         if cena["n_pessoas"] == 1:
+            # "Uma pessoa" aqui quer dizer "o detector só viu uma". Quem fala
+            # de perfil some das amostras da cena, e a cena inteira ficava
+            # travada em quem estava de frente — medido: 12 segundos seguidos
+            # enquadrando a convidada calada enquanto a apresentadora falava.
+            # A detecção de fala conhece a posição das duas (ela usa a posição
+            # medida na etapa 1), então onde ela apontar para longe, ela manda.
+            alvos = _alvos_seguindo_falante(
+                [
+                    posicoes_falante[f] if f < len(posicoes_falante) else None
+                    for f in range(ini, min(fim, total_frames))
+                ],
+                xa, fps,
+            )
+            for deslocamento, f in enumerate(range(ini, min(fim, total_frames))):
+                alvo = alvos[deslocamento]
+                mesmo = abs(alvo - xa) <= 1e-6
+                plano[f] = {
+                    "modo": "SOLO_A", "xa": alvo, "xb": alvo,
+                    "ya": ya if mesmo else Y_PADRAO, "yb": ya if mesmo else Y_PADRAO,
+                    # Sem tamanho medido do outro rosto: ta=0 deixa o quadro no
+                    # teto de abertura em vez de fechar num palpite errado.
+                    "ta": ta if mesmo else 0.0,
+                }
+            ultimo = plano[min(fim, total_frames) - 1]
             ultimo_modo_valido = "SOLO_A"
-            ultimo_xa = xa
-            ultimo_xb = xa
-            ultimo_ya = ya
-            ultimo_yb = ya
-            ultimo_ta = ta
-            for f in range(ini, min(fim, total_frames)):
-                plano[f] = {"modo": "SOLO_A", "xa": xa, "xb": xa, "ya": ya, "yb": ya, "ta": ta}
+            ultimo_xa = ultimo_xb = ultimo["xa"]
+            ultimo_ya = ultimo_yb = ultimo["ya"]
+            ultimo_ta = ultimo.get("ta", 0.0)
             continue
 
         # Duas pessoas próximas cabem juntas; separadas usam split durante

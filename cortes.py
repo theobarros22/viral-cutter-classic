@@ -7,7 +7,15 @@ Usa pydub para análise de áudio e ffmpeg para os cortes finais.
 
 import os
 import subprocess
-from ffmpeg_utils import argumentos_encoder
+from ffmpeg_utils import argumentos_encoder, localizar_ffmpeg, obter_duracao
+
+
+def _log_seguro(msg: str) -> None:
+    """Imprime mensagens sem quebrar com UnicodeEncodeError no console Windows."""
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(str(msg).encode("ascii", errors="replace").decode("ascii"))
 
 # NOTA: pydub é apenas o FALLBACK da detecção de silêncio (o caminho rápido
 # usa FFmpeg silencedetect). O import é feito dentro das funções que precisam
@@ -148,18 +156,18 @@ def _analisar_silencios_ffmpeg(caminho_video: str, min_silencio_ms: int, thresho
     Retorna (duracao_ms, threshold_db, silencios) ou None em falha —
     o chamador então usa o caminho pydub tradicional.
     """
-    from ffmpeg_utils import obter_duracao
     import re
 
     duracao_s = obter_duracao(caminho_video)
     if duracao_s <= 0:
         return None
 
+    ffmpeg = localizar_ffmpeg()
     try:
         # 1. Threshold adaptativo via volumedetect (só áudio, rápido)
         if threshold_db is None:
             r = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-i", caminho_video, "-vn",
+                [ffmpeg, "-hide_banner", "-i", caminho_video, "-vn",
                  "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
@@ -168,12 +176,12 @@ def _analisar_silencios_ffmpeg(caminho_video: str, min_silencio_ms: int, thresho
                 return None
             media_db = float(m.group(1))
             threshold_db = int(max(-60, min(-25, media_db - 16)))
-            print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {media_db:.1f}dB) [FFmpeg]")
+            _log_seguro(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {media_db:.1f}dB) [FFmpeg]")
 
         # 2. Silêncios via silencedetect
         dur_min_s = max(200, int(min_silencio_ms)) / 1000.0
         r = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-i", caminho_video, "-vn",
+            [ffmpeg, "-hide_banner", "-i", caminho_video, "-vn",
              "-af", f"silencedetect=noise={int(threshold_db)}dB:d={dur_min_s:.3f}",
              "-f", "null", "-"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -215,7 +223,7 @@ def remover_silencios(
         duracao_ms = len(audio)
         if threshold_db is None:
             threshold_db = calcular_threshold_adaptativo(audio)
-            print(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {audio.dBFS:.1f}dBFS)")
+            _log_seguro(f"🔉 Threshold adaptativo: {threshold_db}dB (volume médio {audio.dBFS:.1f}dBFS)")
         silencios = silence.detect_silence(
             audio,
             min_silence_len=max(200, int(min_silencio_ms)),
@@ -276,13 +284,13 @@ def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_
     Retorna:
         lista de tuplas (inicio_ms, fim_ms) com os períodos de silêncio
     """
-    print("🔇 Analisando silêncios no áudio...")
+    _log_seguro("🔇 Analisando silêncios no áudio...")
 
     # Caminho rápido: FFmpeg silencedetect
     analise = _analisar_silencios_ffmpeg(caminho_video, min_silencio_ms, threshold_db)
     if analise is not None:
         _, _, periodos_silencio = analise
-        print(f"✅ {len(periodos_silencio)} períodos de silêncio encontrados. [FFmpeg]")
+        _log_seguro(f"✅ {len(periodos_silencio)} períodos de silêncio encontrados. [FFmpeg]")
         return periodos_silencio
 
     # Fallback: pydub
@@ -291,7 +299,7 @@ def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_
 
     if threshold_db is None:
         threshold_db = calcular_threshold_adaptativo(audio)
-        print(f"🔉 Threshold adaptativo: {threshold_db}dB")
+        _log_seguro(f"🔉 Threshold adaptativo: {threshold_db}dB")
 
     periodos_silencio = silence.detect_silence(
         audio,
@@ -299,7 +307,7 @@ def detectar_silencio(caminho_video: str, min_silencio_ms: int = 500, threshold_
         silence_thresh=threshold_db
     )
 
-    print(f"✅ {len(periodos_silencio)} períodos de silêncio encontrados.")
+    _log_seguro(f"✅ {len(periodos_silencio)} períodos de silêncio encontrados.")
     return periodos_silencio
 
 
@@ -401,7 +409,7 @@ def cortar_clipe_com_hook(
     decidem se a pessoa continua assistindo.
     """
     if inicio < 0 or fim <= inicio or hook_fim <= hook_inicio:
-        print(f"⚠️ Hook inválido: clipe {inicio}-{fim}, hook {hook_inicio}-{hook_fim}")
+        _log_seguro(f"⚠️ Hook inválido: clipe {inicio}-{fim}, hook {hook_inicio}-{hook_fim}")
         return False
 
     filtros = (
@@ -415,7 +423,7 @@ def cortar_clipe_com_hook(
         f"[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]"
     )
 
-    cmd = ["ffmpeg", "-y", "-i", caminho_video, "-filter_complex", filtros]
+    cmd = [localizar_ffmpeg(), "-y", "-i", caminho_video, "-filter_complex", filtros]
     cmd += ["-map", "[vout]", "-map", "[aout]"]
     cmd += argumentos_encoder(temporario=True)
     cmd += [
@@ -427,7 +435,7 @@ def cortar_clipe_com_hook(
 
     resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0:
-        print(f"⚠️ FFmpeg falhou no corte com hook: {resultado.stderr[-600:]}")
+        _log_seguro(f"⚠️ FFmpeg falhou no corte com hook: {resultado.stderr[-600:]}")
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
     return resultado.returncode == 0
@@ -448,11 +456,11 @@ def cortar_clipe(caminho_video: str, inicio: float, fim: float, caminho_saida: s
     """
     duracao = fim - inicio
     if inicio < 0 or duracao <= 0:
-        print(f"⚠️ Corte inválido: início={inicio}, fim={fim}")
+        _log_seguro(f"⚠️ Corte inválido: início={inicio}, fim={fim}")
         return False
 
     cmd = [
-        "ffmpeg",
+        localizar_ffmpeg(),
         "-y",                          # sobrescreve sem perguntar
         "-ss", str(inicio),            # começa aqui
         "-i", caminho_video,           # arquivo de entrada
@@ -469,7 +477,7 @@ def cortar_clipe(caminho_video: str, inicio: float, fim: float, caminho_saida: s
 
     resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if resultado.returncode != 0:
-        print(f"⚠️ FFmpeg falhou ao cortar o clipe: {resultado.stderr[-600:]}")
+        _log_seguro(f"⚠️ FFmpeg falhou ao cortar o clipe: {resultado.stderr[-600:]}")
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
     return resultado.returncode == 0
