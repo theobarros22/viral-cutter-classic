@@ -40,6 +40,40 @@ def configurar_ambiente() -> None:
     existentes = [p for p in candidatos if os.path.isdir(p)]
     if existentes:
         os.environ["PATH"] = os.pathsep.join(existentes + [os.environ.get("PATH", "")])
+    configurar_pasta_temporaria()
+
+
+def suprimir_janelas_de_console() -> None:
+    """Impede que cada chamada de ffmpeg abra uma janela preta na tela.
+
+    O app roda por pythonw, sem console. No Windows, um processo de console
+    filho de um pai sem console cria a PRÓPRIA janela — e o processamento chama
+    ffmpeg/ffprobe dezenas de vezes por clipe, então a tela fica piscando
+    janelas durante horas, por cima do que a pessoa estiver fazendo.
+
+    São ~46 pontos de chamada espalhados por dez módulos. Interceptar na origem
+    cobre todos eles e também os que forem escritos depois.
+    """
+    if os.name != "nt":
+        return
+
+    import subprocess
+
+    if getattr(subprocess.Popen, "_viralcutter_sem_janela", False):
+        return
+
+    original = subprocess.Popen.__init__
+    sem_janela = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+    def __init__(self, *args, **kwargs):
+        # creationflags é o 14º posicional. Ninguém passa assim na prática, mas
+        # se passar, respeita o que veio em vez de estourar com argumento duplo.
+        if len(args) < 14:
+            kwargs["creationflags"] = (kwargs.get("creationflags") or 0) | sem_janela
+        return original(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = __init__
+    subprocess.Popen._viralcutter_sem_janela = True
 
 
 def pasta_dados() -> str:
@@ -99,3 +133,67 @@ def registrar_status(porta: int, estado: str) -> str:
     with open(caminho, "w", encoding="utf-8") as arquivo:
         json.dump({"porta": porta, "estado": estado}, arquivo)
     return caminho
+
+
+def _pasta_gravavel(caminho: str) -> bool:
+    """Confirma que da para escrever de verdade, nao so que o caminho existe.
+
+    Uma unidade removida deixa a letra registrada no Windows: os.path.isdir
+    responde True e a falha so aparece na primeira escrita, ja dentro do
+    Gradio. Por isso o teste e uma escrita real.
+    """
+    try:
+        os.makedirs(caminho, exist_ok=True)
+        teste = os.path.join(caminho, ".escrita_ok")
+        with open(teste, "w", encoding="utf-8") as arquivo:
+            arquivo.write("ok")
+        os.remove(teste)
+        return True
+    except Exception:
+        return False
+
+
+def configurar_pasta_temporaria() -> str:
+    """Define GRADIO_TEMP_DIR num lugar que sempre existe.
+
+    O padrao passa a ser LOCALAPPDATA (disco do sistema, sempre montado). Um
+    valor vindo de fora so e respeitado se passar no teste de escrita — assim
+    um caminho apontando para uma unidade ausente nao derruba a inicializacao,
+    apenas e descartado.
+    """
+    candidatos = []
+    definido = os.environ.get("GRADIO_TEMP_DIR")
+    if definido:
+        candidatos.append(definido)
+    candidatos.append(os.path.join(pasta_dados(), "gradio_temp"))
+    candidatos.append(os.path.join(tempfile.gettempdir(), NOME_APP, "gradio_temp"))
+
+    for caminho in candidatos:
+        if _pasta_gravavel(caminho):
+            if definido and caminho != definido:
+                logging.getLogger(NOME_APP).warning(
+                    "GRADIO_TEMP_DIR=%s nao esta gravavel; usando %s.", definido, caminho
+                )
+            os.environ["GRADIO_TEMP_DIR"] = caminho
+            return caminho
+
+    raise RuntimeError("Nenhuma pasta temporaria gravavel foi encontrada.")
+
+
+def discos_prontos() -> list:
+    """Raizes montadas e legiveis, para liberar no allowed_paths do Gradio.
+
+    Substitui a lista fixa com "D:\\": aquela letra pertence a um leitor de
+    cartao sem midia, e as letras dos discos externos mudam entre sessoes.
+    """
+    if os.name != "nt":
+        return ["/"]
+    raizes = []
+    for letra in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        raiz = letra + ":\\"
+        try:
+            if os.path.isdir(raiz) and os.listdir(raiz) is not None:
+                raizes.append(raiz)
+        except Exception:
+            continue
+    return raizes
