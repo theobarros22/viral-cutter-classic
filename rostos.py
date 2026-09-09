@@ -91,6 +91,52 @@ LIMIAR_IDENTIDADE_SFACE = 0.42
 # confundir participantes que compartilham a tomada.
 LIMIAR_IDENTIDADE_SIMULTANEA = 0.48
 
+# Regra 3 de PARA-DESENVOLVEDORES.md, valida ate a troca para identidade facial:
+# "dois lados so viram duas pessoas se estiverem mais afastados que a soma dos
+# meios-ombros E tiverem rostos de tamanho compativel".
+#
+# O agrupamento por embedding jogou essa geometria fora. Num podcast real dois
+# participantes a 57% de tela de distancia viraram uma pessoa so, posicionada no
+# ponto medio entre os dois. A regra volta como VETO: dois grupos que aparecem
+# NO MESMO FRAME, afastados e com rostos de tamanho parecido sao pessoas
+# distintas, e nenhuma similaridade os funde.
+#
+# A co-ocorrencia e exigida de proposito. Sem ela, a mesma pessoa filmada por
+# duas cameras em posicoes diferentes voltaria a virar duas identidades -- que
+# foi justamente o motivo de adotar reconhecimento facial.
+SEPARACAO_MINIMA_LADOS = 0.22
+RAZAO_TAMANHO_COMPATIVEL = 1.7
+
+
+def _mediana_de(grupo, campo: str):
+    """Mediana de um campo das deteccoes, ou None se o dado nao existir."""
+    valores = [
+        float(d[campo]) for d in grupo.get("deteccoes", ()) if d.get(campo) is not None
+    ]
+    return float(np.median(valores)) if valores else None
+
+
+def _sao_participantes_distintos(a, b) -> bool:
+    """Dois grupos no mesmo frame, afastados e de tamanho compativel.
+
+    O veto exige evidencia geometrica. Sem posicao ou sem tamanho nas
+    deteccoes ele nao opina, e a decisao volta a ser so do rosto -- e assim
+    que os testes de unidade e o caminho de fallback continuam valendo.
+    """
+    if not (a["frames"] & b["frames"]):
+        return False
+
+    xa, xb = _mediana_de(a, "posicao_x"), _mediana_de(b, "posicao_x")
+    if xa is None or xb is None:
+        return False
+    if abs(xa - xb) < SEPARACAO_MINIMA_LADOS:
+        return False
+
+    ta, tb = _mediana_de(a, "tamanho"), _mediana_de(b, "tamanho")
+    if not ta or not tb:
+        return False
+    return (max(ta, tb) / min(ta, tb)) <= RAZAO_TAMANHO_COMPATIVEL
+
 # O SFace só distingue pessoas se receber rosto, e a caixa crua nem sempre é
 # rosto: em plano aberto ela pega corpo e parede, e o embedding vira textura de
 # madeira — foi assim que duas pessoas diferentes caíram na mesma identidade e
@@ -703,11 +749,17 @@ def _fundir_grupos_da_mesma_pessoa(grupos: list, reconhecedor, limiar: float) ->
         for i in range(len(grupos)):
             for j in range(i + 1, len(grupos)):
                 a, b = grupos[i], grupos[j]
-                score = max(
+                if _sao_participantes_distintos(a, b):
+                    continue
+                # Mediana, nao maximo. Com oito poses de cada lado, o maximo de
+                # 64 pares sobe so por haver mais amostra: um grupo grande
+                # acabava fundindo com qualquer coisa, e bastava rodar mais
+                # rodadas para a fusao errada acontecer.
+                score = float(np.median([
                     float(reconhecedor.match(ea, eb, cv2.FaceRecognizerSF_FR_COSINE))
                     for ea in a["embeddings"]
                     for eb in b["embeddings"]
-                )
+                ]))
                 limite = (
                     max(limiar, LIMIAR_IDENTIDADE_SIMULTANEA)
                     if a["frames"] & b["frames"]
