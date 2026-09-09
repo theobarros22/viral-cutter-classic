@@ -140,6 +140,9 @@ def sincronizar_legendas_com_beats(
     return palavras_sync
 
 
+from ffmpeg_utils import localizar_ffmpeg, obter_duracao
+
+
 # ── Overlay de áudio ──────────────────────────────────────────────────────────
 
 def mixar_audio(
@@ -169,7 +172,7 @@ def mixar_audio(
     log("🎵 Mixando áudio...")
 
     # Obtém duração do vídeo
-    duracao = _obter_duracao(caminho_video)
+    duracao = obter_duracao(caminho_video)
     if duracao <= 0:
         log("❌ Não foi possível obter duração do vídeo.")
         return False
@@ -187,9 +190,9 @@ def mixar_audio(
     )
 
     cmd = [
-        "ffmpeg", "-y",
+        localizar_ffmpeg(), "-y",
         "-i", caminho_video,
-        "-i", caminho_musica,
+        "-stream_loop", "-1", "-i", caminho_musica,
         "-filter_complex", filtro,
         "-map", "0:v",
         "-map", "[aout]",
@@ -214,17 +217,3 @@ def mixar_audio(
 
     log("❌ Arquivo de saída não gerado.")
     return False
-
-
-def _obter_duracao(caminho: str) -> float:
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_format", caminho
-    ]
-    resultado = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
-    if resultado.returncode != 0:
-        return 0.0
-    dados = json.loads(resultado.stdout)
-    return float(dados.get("format", {}).get("duration", 0))

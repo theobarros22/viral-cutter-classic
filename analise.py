@@ -15,19 +15,13 @@ import re
 import subprocess
 import os
 import tempfile
+import gc
+from ffmpeg_utils import obter_duracao, localizar_ffmpeg
 
 
 def _obter_duracao_segundos(caminho: str) -> float:
-    """Retorna a duração do arquivo em segundos usando ffprobe."""
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_format", caminho
-    ]
-    resultado = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if resultado.returncode != 0:
-        return 0.0
-    dados = json.loads(resultado.stdout)
-    return float(dados.get("format", {}).get("duration", 0))
+    """Retorna a duração do arquivo em segundos usando helper centralizado."""
+    return obter_duracao(caminho)
 
 
 def _extrair_audio_wav(caminho_video: str, caminho_wav: str,
@@ -36,9 +30,11 @@ def _extrair_audio_wav(caminho_video: str, caminho_wav: str,
     Extrai áudio do vídeo para WAV 16kHz mono com FFmpeg.
     Muito menor que o vídeo original — resolve o problema de memória.
     """
-    cmd = ["ffmpeg", "-y", "-i", caminho_video]
+    ffmpeg = localizar_ffmpeg()
+    cmd = [ffmpeg, "-y"]
     if inicio > 0:
-        cmd = ["ffmpeg", "-y", "-ss", str(inicio), "-i", caminho_video]
+        cmd += ["-ss", str(inicio)]
+    cmd += ["-i", caminho_video]
     if duracao is not None:
         cmd += ["-t", str(duracao)]
     cmd += ["-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", caminho_wav]
@@ -132,6 +128,19 @@ def _transcrever_faster_whisper(caminho_video: str, idioma: str, modelo_nome: st
                 os.remove(wav_temp)
             except OSError:
                 pass
+        _liberar_memoria_gpu()
+
+
+def _liberar_memoria_gpu() -> None:
+    """Libera memória não utilizada da GPU para o encoder NVENC."""
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
+    gc.collect()
 
 
 def transcrever_video(caminho_video: str, idioma: str = "pt", modelo_nome: str = "small") -> dict:
@@ -198,7 +207,11 @@ def _transcrever_direto(modelo, caminho_video: str, idioma: str, dispositivo: st
 
     finally:
         if os.path.exists(wav_temp):
-            os.remove(wav_temp)
+            try:
+                os.remove(wav_temp)
+            except OSError:
+                pass
+        _liberar_memoria_gpu()
 
 
 def _transcrever_em_chunks(modelo, caminho_video: str, idioma: str,
@@ -261,8 +274,12 @@ def _transcrever_em_chunks(modelo, caminho_video: str, idioma: str,
 
         finally:
             if os.path.exists(wav_chunk):
-                os.remove(wav_chunk)
+                try:
+                    os.remove(wav_chunk)
+                except OSError:
+                    pass
 
+    _liberar_memoria_gpu()
     print(f"✅ Transcrição concluída! {len(todos_segmentos)} segmentos encontrados.")
 
     return {
@@ -342,6 +359,12 @@ def _segmentar_com_ia(transcricao: dict, duracao_min: int, duracao_max: int, nic
         "crime":     "revelações chocantes, confissões, viradas de investigação, momentos de tensão máxima",
         "esporte":   "gols, jogadas incríveis, reações, comemorações, momentos decisivos",
         "educacao":  "insights práticos, dicas aplicáveis, estatísticas surpreendentes, analogias",
+        "religioso": (
+            "testemunho de virada, milagre e provisão, momento em que a pessoa quase "
+            "desistiu, exortação dirigida a quem assiste, passagem bíblica aplicada à "
+            "vida prática, promessa e resposta de oração. Evite a parte institucional "
+            "e comercial (inscrições, valores, pacotes, avisos de canal)"
+        ),
     }
     criterio = criterios_nicho.get(nicho, criterios_nicho["geral"])
 
@@ -551,6 +574,10 @@ def _segmentar_offline(transcricao: dict, duracao_min: int, duracao_max: int) ->
             "fim":         round(bloco["fim"], 1),
             "score_viral": score,
             "resumo":      f"Segmento de {round(bloco['duracao'])}s detectado automaticamente",
+            # O ajuste por nicho procura vocabulário. Sem a fala do trecho ele
+            # só teria o título (12 palavras) e um resumo genérico para olhar,
+            # e no modo offline o nicho praticamente não mudaria nada.
+            "texto":       texto_completo,
         })
 
     print(f"✅ {len(segmentos)} segmentos detectados no modo offline.")
@@ -711,6 +738,46 @@ _NICHO_CONFIG = {
         "peso_duracao_ideal": (40, 90),
         "bonus_duracao_ideal": 1,
     },
+    "religioso": {
+        "descricao": "Religioso / Fé",
+        # Em pregação e testemunho o que corta bem é a virada — o milagre, a
+        # provisão, o momento em que a pessoa quase desistiu — e a exortação
+        # dirigida a quem assiste. Vocabulário conferido na transcrição real de
+        # um podcast do nicho, não inventado.
+        # O casamento é por substring simples e roda sobre título + resumo, que
+        # são curtos: fragmentos curtos pegam, frases inteiras quase nunca.
+        "palavras_alta_viralidade": [
+            "milagre", "impossível", "provisão", "curou", "libertou",
+            "transformou", "restaurou", "salvou", "desisti", "sobrenatural",
+            "surpreend", "propósito", "chamado", "aleluia", "glória a deus",
+            "fundo do poço", "sem saída", "virada",
+        ],
+        "palavras_narrativa_pessoal": [
+            "testemunho", "quando eu passei", "eu estava perdido",
+            "mudou minha", "minha vida mudou", "eu não acreditava",
+            "passei por", "meu coração", "vivi isso",
+        ],
+        # Exortação direta: é o trecho que o espectador manda para alguém.
+        "palavras_engajamento": [
+            "está te dizendo", "essa palavra", "talvez você", "não desista",
+            "está passando por", "é com você", "levanta e", "recebe essa",
+        ],
+        # A parte comercial e institucional não vira clipe. Num podcast de
+        # caravanas isso é justamente a venda do pacote. Evita "valor", que
+        # em pregação aparece com outro sentido ("o valor da fé").
+        "palavras_penalizar": [
+            "bem-vindo", "bem vindo", "inscreva-se", "inscriç",
+            "pacote", "parcela", "quanto custa", "investimento",
+            "roteiro", "agência", "vagas", "link na bio",
+            "nosso canal", "próximo episódio", "curta o vídeo",
+        ],
+        "peso_perguntas": 0.8,
+        # Pregação e testemunho carregam na ênfase; a exclamação marca o pico.
+        "peso_exclamacoes": 1.4,
+        # Testemunho precisa de espaço para construir a virada.
+        "peso_duracao_ideal": (45, 90),
+        "bonus_duracao_ideal": 1,
+    },
     "geral": {
         "descricao": "Conteúdo Geral",
         "palavras_alta_viralidade": [
@@ -748,7 +815,12 @@ def ajustar_score_por_nicho(segmentos: list, nicho: str) -> list:
 
     ajustados = []
     for seg in segmentos:
-        texto = (seg.get("resumo", "") + " " + seg.get("titulo", "")).lower()
+        # A fala do trecho, quando existe, é o melhor lugar para procurar o
+        # vocabulário do nicho. Segmento vindo da IA traz só título e resumo.
+        texto = (
+            seg.get("texto")
+            or (seg.get("resumo", "") + " " + seg.get("titulo", ""))
+        ).lower()
         score_original = seg.get("score_viral", 5)
         ajuste = 0.0
 
