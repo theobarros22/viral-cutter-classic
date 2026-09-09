@@ -1,19 +1,29 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
+﻿# Ambiente
 venv311/
-build/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Saidas de build e empacotamento
 dist/
-_temp*/
+build/
+pacotes/
+release/
+*.spec.bak
+
+# Temporarios de execucao
+gradio_temp/
 *.log
-config.json
-tools/ffmpeg.exe
-tools/ffprobe.exe
-backups/
-frontend_preview/.server_pid
-studio/server.log
-studio/server-error.log
-studio/exports/
-studio/projects/
-*.zip
-.worktrees/
+*.pid
+_backups/
+diagnostico-identidade/
+test_output/
+
+# Ferramentas externas que sujam a raiz
+graphify-out/
+graphify_*_tmp.py
+*.bak
+
+# Ponteiro do worktree antigo (o repositorio agora e proprio)
+.git-worktree-antigo
+*.err
