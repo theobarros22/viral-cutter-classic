@@ -46,6 +46,36 @@ MSG_VIDEO_ILEGIVEL = (
 # compressÃ£o/iluminaÃ§Ã£o, nÃ£o fala real â€” comum quando um microfone de mesa
 # cobre a boca e a regiÃ£o analisada mal muda de um frame pro outro.
 LIMIAR_MOVIMENTO_LABIAL = 4.0
+# Rosto e mais alto que largo; usado para estimar a caixa de quem o detector
+# nao achou no frame, a partir da largura medida na etapa 1.
+ALTURA_ROSTO_SOBRE_LARGURA_FALA = 1.3
+# YuNet: detector facial do OpenCV. Substitui o BlazeFace de curto alcance do
+# MediaPipe, que neste material nao achava ninguem em metade dos quadros (perfil)
+# e ainda detectava o logo da parede como rosto. Medido no podcast do usuario:
+# MediaPipe 15/30 quadros, YuNet 30/30, e o logo nunca detectado.
+#
+# Devolve tambem 5 pontos faciais (olhos, nariz, cantos da boca) — e a geometria
+# desses pontos que separa rosto de grafico, coisa que uma caixa sozinha nao faz.
+NOME_MODELO_YUNET = "face_detection_yunet_2023mar.onnx"
+URL_MODELO_YUNET = (
+    "https://github.com/opencv/opencv_zoo/raw/refs/heads/main/"
+    "models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+)
+# Detecta numa copia reduzida: 1280 de largura ainda resolve rosto pequeno em
+# plano aberto e evita o custo de rodar a rede sobre 4K.
+# Impressao digital dos modelos que baixamos e conferimos. Sao arquivos vindos
+# da internet que passam a rodar na maquina do usuario: se o download vier
+# corrompido — ou trocado —, e melhor recusar do que usar. Conferido apos o
+# download; se nao bater, o arquivo e apagado e o erro aparece.
+SHA256_MODELOS = {
+    "face_detection_yunet_2023mar.onnx":
+        "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "face_recognition_sface_2021dec.onnx":
+        "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+}
+LARGURA_DETECCAO_YUNET = 1280
+CONFIANCA_MINIMA_YUNET = 0.6
+
 NOME_MODELO_SFACE = "face_recognition_sface_2021dec.onnx"
 URL_MODELO_SFACE = (
     "https://github.com/opencv/opencv_zoo/raw/refs/heads/main/"
@@ -55,7 +85,23 @@ URL_MODELO_SFACE = (
 # nativo do SFace). Em vÃ­deo real, perfis da mesma pessoa ficam por volta de
 # 0.50; 0.55 separava a mesma pessoa em duas identidades. O recorte facial
 # justo reduz a influÃªncia do cenÃ¡rio e permite este limiar conservador.
-LIMIAR_IDENTIDADE_SFACE = 0.47
+LIMIAR_IDENTIDADE_SFACE = 0.42
+# Só funde duas faces presentes no mesmo frame quando a similaridade é bem
+# acima do limiar normal: isso cobre a mesma pessoa em duas câmeras, sem
+# confundir participantes que compartilham a tomada.
+LIMIAR_IDENTIDADE_SIMULTANEA = 0.48
+
+# O SFace só distingue pessoas se receber rosto, e a caixa crua nem sempre é
+# rosto: em plano aberto ela pega corpo e parede, e o embedding vira textura de
+# madeira — foi assim que duas pessoas diferentes caíram na mesma identidade e
+# a mesma pessoa apareceu duas vezes. Por isso a caixa é reapertada no rosto
+# encontrado dentro dela, e o que sobra é medido antes de virar identidade.
+# Os cortes vieram de medição no material real: parede/flor desfocada ficam em
+# nitidez ~10-70, rosto de verdade em 250+; a caixa de plano aberto tem rosto
+# ocupando 0.17-0.26 dela, a de rosto real 0.35+.
+MIN_NITIDEZ_ROSTO = 150.0
+MIN_NITIDEZ_ROSTO_YUNET = 40.0
+MIN_FRACAO_ROSTO = 0.35
 
 
 def _print_seguro(mensagem) -> None:
@@ -119,23 +165,34 @@ def _planejar_rodadas_amostragem(total_frames: int, fps: float,
                                    limite_minutos: float = 5.0) -> list:
     """Distribui pequenos lotes por toda a duração, sem repetir frames."""
     total = max(1, int(total_frames))
-    fps = fps if fps and fps > 0 else 30.0
-    tamanho_faixa = max(1, int(max(1.0, limite_minutos) * 60 * fps))
-    lote = max(6, min(8, int(max_amostras // 4) or 6))
-    rodadas, usados = [], set()
-    inicio = 0
-    while inicio < total:
-        fim = min(total, inicio + tamanho_faixa)
-        alvos = []
-        for valor in np.linspace(inicio, max(inicio, fim - 1), lote, dtype=int):
-            frame = int(valor)
-            if frame not in usados:
-                usados.add(frame)
-                alvos.append(frame)
-        if alvos:
-            rodadas.append(alvos)
-        inicio = fim
-    return rodadas
+    quantidade = min(total, max(1, int(max_amostras)))
+    # Em podcasts, os dois participantes costumam aparecer juntos logo no
+    # começo. Reservar uma parte da amostragem evita perder um deles quando o
+    # restante do episódio alterna apenas para quem está falando.
+    inicio_quantidade = min(quantidade, max(2, quantidade // 4))
+    inicio_fim = min(
+        total - 1,
+        max(1, int(max(1.0, limite_minutos) * 60 * (fps or 30.0)) - 1),
+    )
+    alvos = list(dict.fromkeys(
+        [
+            *(int(valor) for valor in np.linspace(
+                0, inicio_fim, inicio_quantidade, dtype=int
+            )),
+            *(int(valor) for valor in np.linspace(
+                0, total - 1, quantidade, dtype=int
+            )),
+        ]
+    ))
+    if len(alvos) < quantidade:
+        for valor in np.linspace(0, total - 1, quantidade * 2, dtype=int):
+            if int(valor) not in alvos:
+                alvos.append(int(valor))
+            if len(alvos) == quantidade:
+                break
+    alvos = sorted(alvos[:quantidade])
+    lote = max(1, min(8, int(max_amostras // 4) or 1))
+    return [alvos[inicio:inicio + lote] for inicio in range(0, len(alvos), lote)]
 
 
 def _busca_esta_estavel(historico_assinaturas: list,
@@ -209,13 +266,33 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                     recorte_identidade = frame[ry1:ry2, rx1:rx2]
                     if recorte.size == 0 or recorte_identidade.size == 0:
                         continue
+                    # Aperta no rosto antes de guardar: é este recorte que vira
+                    # embedding, e caixa com parede dentro embaralha identidades.
+                    apertado = _apertar_no_rosto(recorte_identidade, detector)
+                    if apertado is None:
+                        continue
+                    recorte_identidade, fracao = apertado
+                    recorte_embedding = _alinhar_rosto_yunet(
+                        frame, rosto, reconhecedor
+                    )
+                    if recorte_embedding is None:
+                        recorte_embedding = recorte_identidade
                     deteccoes.append({
                         "posicao_x": rosto["x"],
                         "posicao_y": rosto["y"],
+                        # Tamanho do rosto DE VERDADE: a caixa crua vem inflada,
+                        # e `fracao` diz quanto dela o rosto ocupa. Guardado aqui
+                        # porque a deteccao de fala precisa saber onde fica a boca
+                        # de quem o detector nao achou naquele frame.
+                        "tamanho": float(rosto["w"]) * 1.1 * float(fracao),
                         "fonte": rosto.get("fonte", "mediapipe"),
                         "confianca": rosto.get("confianca", 0.0),
+                        "pontos": rosto.get("pontos", []),
                         "recorte": recorte,
                         "recorte_identidade": recorte_identidade,
+                        "recorte_embedding": recorte_embedding,
+                        "fracao_rosto": fracao,
+                        "nitidez": _nitidez(recorte_identidade),
                         "frame_idx": int(frame_idx),
                     })
 
@@ -241,7 +318,10 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
                 f"Rodada {numero}: {segundo_ini // 60}-{segundo_fim // 60} min, "
                 f"{lidos_rodada} amostras, {len(pessoas)} identidade(s) confirmada(s)."
             )
-            if _busca_esta_estavel(historico, 3):
+            if (
+                amostras_analisadas >= max(1, int(max_amostras))
+                and _busca_esta_estavel(historico, 3)
+            ):
                 motivo_parada = "identidades estáveis por três rodadas"
                 break
     finally:
@@ -263,6 +343,165 @@ def detectar_pessoas_no_video(caminho_video: str, max_amostras: int = 30,
     _print_seguro(f"{len(pessoas)} pessoa(s) identificada(s) no vídeo.")
     return pessoas
 
+def _apertar_no_rosto(recorte, detector):
+    """Reaperta a caixa no rosto que existe dentro dela.
+
+    Devolve ``(recorte_apertado, fracao)``, onde ``fracao`` é quanto da largura
+    da caixa o rosto ocupa — baixo significa caixa de corpo inteiro ou cenário.
+    Devolve ``None`` quando não há rosto nenhum ali dentro.
+    """
+    if not isinstance(recorte, np.ndarray) or recorte.size == 0:
+        return None
+    if min(recorte.shape[:2]) < 24:
+        return None
+
+    # Trabalha numa cópia reduzida. O detector é de curto alcance e se comporta
+    # de outro jeito num recorte 4K — em vídeo assim ele passou a recusar os
+    # perfis da apresentadora. 400px é a escala em que os cortes desta função
+    # foram medidos, e ainda sobra resolução de sobra para o SFace (112px).
+    maior = max(recorte.shape[:2])
+    if maior > 400:
+        escala = 400.0 / maior
+        recorte = cv2.resize(
+            recorte,
+            (max(1, int(recorte.shape[1] * escala)), max(1, int(recorte.shape[0] * escala))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    try:
+        achados = detectar_rostos_robusto(recorte, detector)
+    except Exception as erro:
+        LOGGER.debug("Falha ao reapertar recorte: %s", erro)
+        return None
+    if not achados:
+        return None
+
+    rosto = max(achados, key=lambda r: float(r["w"]) * float(r.get("h", r["w"])))
+    altura, largura = recorte.shape[:2]
+    x_centro, y_centro = rosto["x"] * largura, rosto["y"] * altura
+    w_rosto = rosto["w"] * largura
+    h_rosto = rosto.get("h", rosto["w"]) * altura
+    x1 = max(0, int(x_centro - w_rosto * 0.62))
+    y1 = max(0, int(y_centro - h_rosto * 0.62))
+    x2 = min(largura, int(x_centro + w_rosto * 0.62))
+    y2 = min(altura, int(y_centro + h_rosto * 0.62))
+    apertado = recorte[y1:y2, x1:x2]
+    if apertado.size == 0 or min(apertado.shape[:2]) < 24:
+        return None
+    return apertado, float(rosto["w"])
+
+
+def refinar_caixa_rosto(frame, rosto: dict, detector) -> dict:
+    """Corrige a caixa do detector para a caixa do rosto de verdade.
+
+    A detecção multiescala às vezes devolve uma caixa bem maior que o rosto,
+    pegando tronco e parede junto. Quem depende do TAMANHO do rosto se perde
+    com isso: o enquadramento conclui que a cabeça não cabe no quadro 9:16 e
+    degrada para um layout mais aberto — no meio de um plano estável, e só nas
+    amostras em que a caixa saiu inflada. O resultado é o zoom pulando.
+
+    Devolve uma cópia do rosto com x/y/w/h corrigidos, em coordenadas
+    normalizadas do frame original, ou ``None`` se não houver rosto ali dentro.
+    """
+    if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+        return None
+
+    # O YuNet ja entrega a caixa justa no rosto, com pontos faciais. Reapertar
+    # so gastaria tempo e poderia piorar. Este refino existe para a caixa do
+    # MediaPipe, que vinha inflada com tronco e parede dentro.
+    if rosto.get("fonte") == "yunet":
+        refinado = dict(rosto)
+        refinado.setdefault("nitidez", _nitidez_da_caixa(frame, rosto))
+        return refinado
+
+    altura, largura = frame.shape[:2]
+    try:
+        centro_x = float(rosto["x"]) * largura
+        centro_y = float(rosto["y"]) * altura
+        rosto_w = float(rosto["w"]) * largura
+        rosto_h = float(rosto.get("h", rosto["w"])) * altura
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    x0 = max(0, int(centro_x - rosto_w * 0.55))
+    y0 = max(0, int(centro_y - rosto_h * 0.55))
+    x1 = min(largura, int(centro_x + rosto_w * 0.55))
+    y1 = min(altura, int(centro_y + rosto_h * 0.55))
+    recorte = frame[y0:y1, x0:x1]
+    if recorte.size == 0 or min(recorte.shape[:2]) < 24:
+        return None
+
+    rec_h, rec_w = recorte.shape[:2]
+    maior = max(rec_h, rec_w)
+    reduzido = recorte
+    if maior > 400:
+        escala = 400.0 / maior
+        reduzido = cv2.resize(
+            recorte,
+            (max(1, int(rec_w * escala)), max(1, int(rec_h * escala))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    try:
+        # Passe único, não a busca multiescala: aqui o rosto já ocupa boa parte
+        # do recorte, então varrer metades ampliadas em 3x só custa tempo — e
+        # esta função roda uma vez por rosto por amostra.
+        achados = _detectar_rostos_frame(reduzido, detector)
+        if not achados:
+            achados = detectar_rostos_robusto(reduzido, detector)
+    except Exception as erro:
+        LOGGER.debug("Falha ao refinar caixa de rosto: %s", erro)
+        return None
+    if not achados:
+        return None
+
+    interno = max(achados, key=lambda r: float(r["w"]) * float(r.get("h", r["w"])))
+
+    # Nitidez do rosto apertado, medida na escala em que os cortes foram
+    # calibrados. Serve para quem chama distinguir rosto de decoracao: no
+    # material real, flor e luminaria desfocadas ficam em 10-70 e rosto em 250+.
+    altura_r, largura_r = reduzido.shape[:2]
+    ix1 = max(0, int(interno["x"] * largura_r - interno["w"] * largura_r * 0.5))
+    iy1 = max(0, int(interno["y"] * altura_r - interno.get("h", interno["w"]) * altura_r * 0.5))
+    ix2 = min(largura_r, int(interno["x"] * largura_r + interno["w"] * largura_r * 0.5))
+    iy2 = min(altura_r, int(interno["y"] * altura_r + interno.get("h", interno["w"]) * altura_r * 0.5))
+    recorte_rosto = reduzido[iy1:iy2, ix1:ix2]
+    nitidez = _nitidez(recorte_rosto) if recorte_rosto.size else 0.0
+
+    refinado = dict(rosto)
+    refinado["nitidez"] = nitidez
+    refinado["x"] = (x0 + float(interno["x"]) * rec_w) / largura
+    refinado["y"] = (y0 + float(interno["y"]) * rec_h) / altura
+    refinado["w"] = (float(interno["w"]) * rec_w) / largura
+    refinado["h"] = (float(interno.get("h", interno["w"])) * rec_h) / altura
+    return refinado
+
+
+def _nitidez_da_caixa(frame, rosto) -> float:
+    """Nitidez medida dentro da caixa do rosto, na escala usada nos limiares."""
+    altura, largura = frame.shape[:2]
+    cx, cy = float(rosto["x"]) * largura, float(rosto["y"]) * altura
+    w = float(rosto["w"]) * largura
+    h = float(rosto.get("h", rosto["w"])) * altura
+    x1 = max(0, int(cx - w / 2)); y1 = max(0, int(cy - h / 2))
+    x2 = min(largura, int(cx + w / 2)); y2 = min(altura, int(cy + h / 2))
+    recorte = frame[y1:y2, x1:x2]
+    if recorte.size == 0 or min(recorte.shape[:2]) < 12:
+        return 0.0
+    maior = max(recorte.shape[:2])
+    if maior > 400:
+        e = 400.0 / maior
+        recorte = cv2.resize(recorte, (max(1, int(recorte.shape[1]*e)),
+                                       max(1, int(recorte.shape[0]*e))),
+                             interpolation=cv2.INTER_AREA)
+    return _nitidez(recorte)
+
+
+def _nitidez(recorte) -> float:
+    cinza = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(cinza, cv2.CV_64F).var())
+
+
 def _remover_identidades_sem_rosto_valido(deteccoes: list) -> list:
     """Mantém somente recortes faciais reais, não quadros vazios ou minúsculos."""
     validas = []
@@ -273,8 +512,21 @@ def _remover_identidades_sem_rosto_valido(deteccoes: list) -> list:
         if recorte.ndim < 2 or recorte.shape[0] < 20 or recorte.shape[1] < 20:
             continue
         proporcao = recorte.shape[1] / max(1.0, float(recorte.shape[0]))
-        if 0.45 <= proporcao <= 1.8:
-            validas.append(det)
+        if not (0.45 <= proporcao <= 1.8):
+            continue
+        # Sem rosto de verdade não há identidade: cenário desfocado e caixas de
+        # corpo inteiro só atrapalham o agrupamento.
+        if float(det.get("fracao_rosto", 1.0)) < MIN_FRACAO_ROSTO:
+            continue
+        limite_nitidez = (
+            MIN_NITIDEZ_ROSTO_YUNET
+            if det.get("fonte") == "yunet"
+            and float(det.get("confianca", 0.0)) >= CONFIANCA_MINIMA_YUNET
+            else MIN_NITIDEZ_ROSTO
+        )
+        if float(det.get("nitidez", 1e9)) < limite_nitidez:
+            continue
+        validas.append(det)
     return validas
 
 def _filtrar_candidatos_pessoas(
@@ -337,18 +589,21 @@ def _inicializar_reconhecedor_facial():
         return None
 
     caminho = _caminho_modelo_reconhecimento()
+    if os.path.isfile(caminho) and not _conferir_modelo(caminho):
+        _print_seguro("   Modelo de reconhecimento corrompido; baixando de novo.")
+        try:
+            os.remove(caminho)
+        except OSError:
+            pass
     if not os.path.isfile(caminho) or os.path.getsize(caminho) < 30_000_000:
         try:
-            import urllib.request
             _print_seguro("   Baixando modelo de reconhecimento facial (37 MB)...")
-            temporario = caminho + ".download"
-            urllib.request.urlretrieve(URL_MODELO_SFACE, temporario)
-            os.replace(temporario, caminho)
+            _baixar_modelo(URL_MODELO_SFACE, caminho)
         except Exception as erro:
             LOGGER.warning("SFace indisponÃ­vel; usando agrupamento por posiÃ§Ã£o: %s", erro)
             try:
-                if os.path.exists(caminho + ".download"):
-                    os.remove(caminho + ".download")
+                if os.path.exists(caminho + ".parcial"):
+                    os.remove(caminho + ".parcial")
             except OSError:
                 pass
             return None
@@ -369,6 +624,37 @@ def _extrair_embedding_facial(recorte, reconhecedor):
         return embedding
     except Exception as erro:
         LOGGER.debug("Falha ao extrair embedding facial: %s", erro)
+        return None
+
+
+def _alinhar_rosto_yunet(frame, rosto: dict, reconhecedor):
+    """Alinha o rosto YuNet antes do SFace comparar identidades."""
+    if (
+        reconhecedor is None
+        or rosto.get("fonte") != "yunet"
+        or len(rosto.get("pontos", ())) != 5
+        or frame is None
+        or frame.size == 0
+    ):
+        return None
+    try:
+        altura, largura = frame.shape[:2]
+        w = float(rosto["w"]) * largura
+        h = float(rosto["h"]) * altura
+        x = float(rosto["x"]) * largura - w / 2.0
+        y = float(rosto["y"]) * altura - h / 2.0
+        face = np.array(
+            [[x, y, w, h, *(
+                coordenada
+                for ponto in rosto["pontos"]
+                for coordenada in (float(ponto[0]) * largura, float(ponto[1]) * altura)
+            )]],
+            dtype=np.float32,
+        )
+        alinhado = reconhecedor.alignCrop(frame, face)
+        return alinhado if isinstance(alinhado, np.ndarray) and alinhado.size else None
+    except Exception as erro:
+        LOGGER.debug("Falha ao alinhar rosto YuNet: %s", erro)
         return None
 
 
@@ -401,6 +687,44 @@ def _escolher_melhor_preview(deteccoes: list):
     return max(deteccoes, key=lambda d: d["recorte"].shape[0] * d["recorte"].shape[1])
 
 
+def _fundir_grupos_da_mesma_pessoa(grupos: list, reconhecedor, limiar: float) -> list:
+    """Junta grupos que são a mesma pessoa vista de outro jeito.
+
+    O agrupamento é guloso e vai comparando cada rosto com os grupos que já
+    existem, então quem aparece muito de perfil acaba espalhado em vários
+    grupos pequenos que depois morrem no corte de mínimo de frames — foi o que
+    sumiu com a apresentadora no material de teste. Aqui os grupos se comparam
+    entre si. Dois grupos que aparecem no mesmo frame são pessoas distintas,
+    por definição, e nunca se fundem.
+    """
+    fundiu = True
+    while fundiu:
+        fundiu = False
+        for i in range(len(grupos)):
+            for j in range(i + 1, len(grupos)):
+                a, b = grupos[i], grupos[j]
+                score = max(
+                    float(reconhecedor.match(ea, eb, cv2.FaceRecognizerSF_FR_COSINE))
+                    for ea in a["embeddings"]
+                    for eb in b["embeddings"]
+                )
+                limite = (
+                    max(limiar, LIMIAR_IDENTIDADE_SIMULTANEA)
+                    if a["frames"] & b["frames"]
+                    else limiar
+                )
+                if score >= limite:
+                    a["deteccoes"].extend(b["deteccoes"])
+                    a["frames"] |= b["frames"]
+                    a["embeddings"] = (a["embeddings"] + b["embeddings"])[:8]
+                    grupos.pop(j)
+                    fundiu = True
+                    break
+            if fundiu:
+                break
+    return grupos
+
+
 def _agrupar_por_identidade(
     deteccoes: list,
     reconhecedor,
@@ -410,7 +734,9 @@ def _agrupar_por_identidade(
     """Agrupa rostos pelo embedding SFace, independentemente da cÃ¢mera/lado."""
     grupos = []
     for det in sorted(deteccoes, key=lambda d: int(d.get("frame_idx", 0))):
-        recorte_identidade = det.get("recorte_identidade", det["recorte"])
+        recorte_identidade = det.get(
+            "recorte_embedding", det.get("recorte_identidade", det["recorte"])
+        )
         embedding = _extrair_embedding_facial(recorte_identidade, reconhecedor)
         if embedding is None:
             continue
@@ -448,7 +774,12 @@ def _agrupar_por_identidade(
             "SFace nÃ£o extraiu embeddings; usando agrupamento por posiÃ§Ã£o."
         )
         return _agrupar_por_posicao(deteccoes)
-    minimo_frames = max(2, int(np.ceil(max(1, total_amostras) * 0.12)))
+
+    grupos = _fundir_grupos_da_mesma_pessoa(grupos, reconhecedor, limiar)
+    # Em uma varredura global de 30 pontos, um participante que aparece em
+    # duas tomadas distintas é real; exigir quatro o descartava. Em análises
+    # maiores, a fração mantém a proteção contra rostos passageiros.
+    minimo_frames = max(2, int(np.ceil(max(1, total_amostras) * 0.06)))
     grupos = [g for g in grupos if len(g["frames"]) >= minimo_frames]
     grupos.sort(key=lambda g: float(np.mean([d["posicao_x"] for d in g["deteccoes"]])))
 
@@ -459,11 +790,18 @@ def _agrupar_por_identidade(
         preview = cv2.resize(melhor.get("recorte_identidade", melhor["recorte"]), (200, 200), interpolation=cv2.INTER_LANCZOS4)
         _, buffer = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 85])
         pos_x_media = float(np.mean([d["posicao_x"] for d in detecs]))
+        # Mediana, nao media: uma deteccao esquisita nao pode deslocar o ponto
+        # onde a deteccao de fala vai procurar a boca desta pessoa.
+        pos_y_media = float(np.median([d.get("posicao_y", 0.40) for d in detecs]))
+        tamanhos = [float(d.get("tamanho", 0.0)) for d in detecs if d.get("tamanho")]
+        tamanho_medio = float(np.median(tamanhos)) if tamanhos else 0.0
         lado = "esquerda" if pos_x_media < 0.4 else ("direita" if pos_x_media > 0.6 else "centro")
         pessoas.append({
             "id": len(pessoas),
             "nome": f"Pessoa {len(pessoas) + 1} ({lado})",
             "posicao_x": pos_x_media,
+            "posicao_y": pos_y_media,
+            "tamanho": tamanho_medio,
             "lado": lado,
             "preview_base64": base64.b64encode(buffer).decode("utf-8"),
             "n_aparicoes": len(detecs),
@@ -630,6 +968,22 @@ def detectar_quem_fala_por_frame(
                 if not ret:
                     continue
                 rostos = detectar_rostos_robusto(frame, detector)
+                # Mesmo criterio das outras etapas: decoracao desfocada tambem
+                # e "detectada" e aqui chega a VENCER a disputa de movimento
+                # labial (ruido de compressao mexe tanto quanto uma boca), e o
+                # quadro ia parar 17s sobre um aparador. Sem rosto confiavel e
+                # melhor herdar o falante anterior do que mirar em movel.
+                rostos = [
+                    refinado
+                    for refinado in (
+                        refinar_caixa_rosto(frame, bruto, detector) for bruto in rostos
+                    )
+                    if refinado is not None
+                    and float(refinado.get("nitidez", 0.0)) >= MIN_NITIDEZ_ROSTO
+                ]
+                # Inclui quem o detector nao achou mas sabemos onde esta: sem
+                # isso, o unico rosto visivel virava "o falante" por omissao.
+                rostos = _candidatos_falante(rostos, pessoas)
 
                 if len(rostos) == 0:
                     resultado[frame_idx] = ultimo_falante_x
@@ -661,6 +1015,48 @@ def detectar_quem_fala_por_frame(
 
     _print_seguro(f"âœ… DetecÃ§Ã£o de fala concluÃ­da!")
     return resultado
+
+
+def _candidatos_falante(rostos_detectados: list, pessoas: list) -> list:
+    """Junta os rostos detectados com a posição conhecida de quem ficou de fora.
+
+    Quem fala de perfil escapa do detector o tempo todo: neste material, em 24%
+    dos frames só um rosto era encontrado, e em 96% dessas vezes era a mesma
+    pessoa — a que olha para a câmera. O código então tomava o único rosto
+    visível como falante e o quadro fechava em quem estava calado.
+
+    Numa câmera fixa isso é evitável: a etapa 1 já mediu onde cada participante
+    fica. Basta medir o movimento de boca naquele ponto, mesmo sem detecção.
+
+    Só entra palpite quando ALGUM rosto foi detectado no frame: sem nenhum, a
+    cena provavelmente nem é a do estúdio (b-roll, outro ângulo) e inventar
+    posição ali só criaria enquadramento em cima de parede.
+    """
+    candidatos = [dict(r) for r in (rostos_detectados or [])]
+    if not candidatos:
+        return candidatos
+
+    for pessoa in pessoas or []:
+        posicao_x = pessoa.get("posicao_x")
+        tamanho = float(pessoa.get("tamanho") or 0.0)
+        if posicao_x is None or tamanho <= 0.0:
+            continue
+        posicao_x = float(posicao_x)
+        ja_detectada = any(
+            abs(float(c.get("x", 0.5)) - posicao_x) < max(0.06, float(c.get("w", 0.06)))
+            for c in candidatos
+        )
+        if ja_detectada:
+            continue
+        candidatos.append({
+            "x": posicao_x,
+            "y": float(pessoa.get("posicao_y") or 0.40),
+            "w": tamanho,
+            "h": tamanho * ALTURA_ROSTO_SOBRE_LARGURA_FALA,
+            "fonte": "posicao_conhecida",
+            "confianca": 0.0,
+        })
+    return candidatos
 
 
 def _detectar_movimento_labial(
@@ -785,7 +1181,139 @@ def _interpolar_falante(posicoes: list, total_frames: int, valor_inicial: float 
 
 # â”€â”€ MediaPipe helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+def _conferir_modelo(caminho: str) -> bool:
+    """Confere o arquivo contra a impressao digital conhecida.
+
+    Sem hash registrado devolve True: o objetivo e recusar arquivo corrompido
+    ou trocado, nao impedir que alguem aponte um modelo proprio.
+    """
+    import hashlib
+
+    esperado = SHA256_MODELOS.get(os.path.basename(caminho))
+    if not esperado:
+        return True
+    digestor = hashlib.sha256()
+    try:
+        with open(caminho, "rb") as arquivo:
+            for bloco in iter(lambda: arquivo.read(1 << 20), b""):
+                digestor.update(bloco)
+    except OSError:
+        return False
+    return digestor.hexdigest() == esperado
+
+
+def _baixar_modelo(url: str, destino: str) -> str:
+    """Baixa, confere e so entao publica o arquivo no lugar definitivo.
+
+    Baixa para um temporario: assim um download interrompido nao deixa um
+    modelo pela metade que pareca valido na proxima execucao.
+    """
+    import urllib.request
+
+    parcial = destino + ".parcial"
+    urllib.request.urlretrieve(url, parcial)
+    if not _conferir_modelo(parcial):
+        try:
+            os.remove(parcial)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"O modelo baixado nao confere com a impressao digital conhecida: "
+            f"{os.path.basename(destino)}. Download recusado."
+        )
+    os.replace(parcial, destino)
+    return destino
+
+
+def _caminho_modelo_yunet() -> str:
+    """Baixa o modelo do YuNet na primeira vez e reaproveita depois."""
+    pasta = os.path.join(pasta_dados(), "models")
+    os.makedirs(pasta, exist_ok=True)
+    destino = os.path.join(pasta, NOME_MODELO_YUNET)
+    if os.path.isfile(destino) and not _conferir_modelo(destino):
+        _print_seguro("Modelo YuNet corrompido; baixando de novo.")
+        os.remove(destino)
+    if not os.path.isfile(destino):
+        _print_seguro("Baixando detector facial YuNet (230 KB)...")
+        _baixar_modelo(URL_MODELO_YUNET, destino)
+    return destino
+
+
+def _inicializar_yunet():
+    """Detector principal. Devolve None se o OpenCV nao tiver o YuNet."""
+    if not hasattr(cv2, "FaceDetectorYN"):
+        return None
+    try:
+        caminho = _caminho_modelo_yunet()
+        obj = cv2.FaceDetectorYN.create(
+            caminho, "", (LARGURA_DETECCAO_YUNET, LARGURA_DETECCAO_YUNET),
+            CONFIANCA_MINIMA_YUNET, 0.3, 5000,
+        )
+        _print_seguro("Detector YuNet carregado.")
+        return {"tipo": "yunet", "obj": obj, "tamanho": None}
+    except Exception as erro:
+        LOGGER.warning("YuNet indisponivel (%s); usando MediaPipe.", erro)
+        return None
+
+
+def _detectar_rostos_yunet(frame, detector) -> list:
+    """Passe unico numa copia reduzida — o YuNet ja resolve rosto pequeno.
+
+    A busca multiescala que o MediaPipe exigia (frame inteiro, 2x, metades em
+    3x) fica desnecessaria aqui, e era ela que produzia caixas infladas com
+    parede dentro.
+    """
+    altura, largura = frame.shape[:2]
+    if largura < 32 or altura < 32:
+        return []
+
+    escala = min(1.0, LARGURA_DETECCAO_YUNET / float(largura))
+    larg_d = max(32, int(round(largura * escala)))
+    alt_d = max(32, int(round(altura * escala)))
+    reduzido = (
+        cv2.resize(frame, (larg_d, alt_d), interpolation=cv2.INTER_AREA)
+        if escala < 1.0 else frame
+    )
+
+    obj = detector["obj"]
+    if detector.get("tamanho") != (larg_d, alt_d):
+        obj.setInputSize((larg_d, alt_d))
+        detector["tamanho"] = (larg_d, alt_d)
+
+    try:
+        _, faces = obj.detect(reduzido)
+    except Exception as erro:
+        LOGGER.debug("Falha no YuNet: %s", erro)
+        return []
+    if faces is None:
+        return []
+
+    rostos = []
+    for face in faces:
+        x, y, w, h = (float(v) for v in face[:4])
+        if w <= 0 or h <= 0:
+            continue
+        rostos.append({
+            "x": (x + w / 2.0) / larg_d,
+            "y": (y + h / 2.0) / alt_d,
+            "w": w / larg_d,
+            "h": h / alt_d,
+            "fonte": "yunet",
+            "confianca": float(face[14]),
+            # Pontos faciais em coordenadas normalizadas do frame original.
+            "pontos": [
+                ((float(face[4 + i * 2]) / larg_d), (float(face[5 + i * 2]) / alt_d))
+                for i in range(5)
+            ],
+        })
+    return rostos
+
+
 def _inicializar_detector():
+    yunet = _inicializar_yunet()
+    if yunet is not None:
+        return yunet
+
     mediapipe_detector = None
     erros = []
     try:
@@ -852,6 +1380,8 @@ def _inicializar_detector():
 
 def _fechar_detector(detector):
     try:
+        if isinstance(detector, dict) and detector.get("tipo") == "yunet":
+            return  # o YuNet nao mantem recurso a liberar
         if isinstance(detector, dict) and detector.get("tipo") == "combinado":
             mp_detector = detector.get("mediapipe")
             if mp_detector and mp_detector.get("obj"):
@@ -885,6 +1415,9 @@ def detectar_rostos_robusto(frame, detector) -> list:
     Retorna lista no mesmo formato de _detectar_rostos_frame
     (coordenadas normalizadas 0-1 relativas ao frame ORIGINAL).
     """
+    if isinstance(detector, dict) and detector.get("tipo") == "yunet":
+        return _limpar_deteccoes(_detectar_rostos_yunet(frame, detector))
+
     mp_detector = detector.get("mediapipe") if isinstance(detector, dict) else detector
 
     h, w = frame.shape[:2]
@@ -1057,6 +1590,8 @@ def _limpar_deteccoes(rostos: list) -> list:
             "fonte": rosto.get("fonte", "desconhecida"),
             "confianca": float(rosto.get("confianca", 0.0)),
         }
+        if rosto.get("pontos"):
+            limpo["pontos"] = list(rosto["pontos"])
         if limpo["w"] <= 0 or limpo["h"] <= 0:
             continue
         if any(_deteccoes_sobrepostas(limpo, existente) for existente in resultado):

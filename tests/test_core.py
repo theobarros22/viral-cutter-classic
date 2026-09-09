@@ -23,6 +23,8 @@ from enquadramento import (
     _agrupar_posicoes_cena,
     _calcular_x_crop,
     _calcular_crop_seguro,
+    _caixas_cabecas,
+    _validar_crop_alvos,
     _classificar_modos_fala,
     _compor_frame_seguro,
     _compor_frame_seguro,
@@ -82,11 +84,12 @@ class TestCore(unittest.TestCase):
         self.assertEqual(NOME_MODELO_SFACE, "face_recognition_sface_2021dec.onnx")
         self.assertNotIn("int8", URL_MODELO_SFACE.lower())
 
-    def test_rodadas_adaptativas_chegam_depois_de_introducao_longa(self):
+    def test_amostras_cobrem_video_longo_sem_ultrapassar_orcamento(self):
         rodadas = rostos._planejar_rodadas_amostragem(30 * 60 * 60, 30.0, 30, 5.0)
-        self.assertLess(max(rodadas[0]), 5 * 60 * 30)
-        self.assertGreater(max(max(r) for r in rodadas), 45 * 60 * 30)
-        self.assertEqual(len({f for r in rodadas for f in r}), sum(map(len, rodadas)))
+        frames = [frame for rodada in rodadas for frame in rodada]
+        self.assertEqual(len(frames), 30)
+        self.assertGreater(max(frames), 45 * 60 * 30)
+        self.assertEqual(len(set(frames)), len(frames))
 
     def test_busca_estavel_exige_identidades_repetidas(self):
         self.assertFalse(rostos._busca_esta_estavel([(), (), (), ()], 3))
@@ -106,6 +109,27 @@ class TestCore(unittest.TestCase):
         deteccoes = [{"recorte_identidade": np.empty((0, 0, 3), np.uint8)}]
         self.assertEqual(rostos._remover_identidades_sem_rosto_valido(deteccoes), [])
 
+    def test_yunet_confiavel_aceita_rosto_suave_para_confirmacao_por_frames(self):
+        deteccoes = [
+            {
+                "recorte_identidade": np.zeros((40, 40, 3), np.uint8),
+                "fonte": "yunet",
+                "confianca": 0.90,
+                "fracao_rosto": 0.90,
+                "nitidez": 45.0,
+            },
+            {
+                "recorte_identidade": np.zeros((40, 40, 3), np.uint8),
+                "fonte": "mediapipe",
+                "fracao_rosto": 0.90,
+                "nitidez": 45.0,
+            },
+        ]
+
+        validas = rostos._remover_identidades_sem_rosto_valido(deteccoes)
+
+        self.assertEqual(validas, [deteccoes[0]])
+
     def test_modelo_facial_tem_caminho_persistente(self):
         self.assertTrue(_caminho_modelo_facial().endswith("face_detector.tflite"))
 
@@ -113,10 +137,18 @@ class TestCore(unittest.TestCase):
         self.assertTrue(_caminho_modelo_reconhecimento().endswith(".onnx"))
 
     def test_detector_principal_inicializa(self):
+        # O detector principal passou a ser o YuNet; MediaPipe e Haar seguem
+        # como reserva. O que importa aqui e que algum motor utilizavel subiu,
+        # nao qual deles — por isso o teste aceita os tres.
         detector = _inicializar_detector()
         try:
             self.assertIsNotNone(detector)
-            self.assertIsNotNone(detector.get("mediapipe") or detector.get("haar"))
+            motor = (
+                detector.get("obj")
+                or detector.get("mediapipe")
+                or detector.get("haar")
+            )
+            self.assertIsNotNone(motor, f"nenhum motor de deteccao em {detector!r}")
         finally:
             _fechar_detector(detector)
 
@@ -238,6 +270,118 @@ class TestCore(unittest.TestCase):
         pessoas = _agrupar_por_identidade(deteccoes, ReconhecedorFake(), total_amostras=6)
         self.assertEqual(len(pessoas), 2)
         self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [3, 3])
+
+    def test_identidade_une_perfis_da_mesma_pessoa_com_similaridade_medida(self):
+        class ReconhecedorFake:
+            def feature(self, imagem):
+                return np.array([[float(imagem[0, 0, 0])]])
+
+            def match(self, a, b, _metrica):
+                valores = {int(a[0, 0]), int(b[0, 0])}
+                if len(valores) == 1:
+                    return 1.0
+                return 0.428 if valores == {10, 20} else 0.41
+
+        deteccoes = []
+        for frame, valor, x in (
+            (1, 10, 0.20), (2, 10, 0.20),
+            (3, 20, 0.80), (4, 20, 0.80),
+            (1, 30, 0.65), (2, 30, 0.65),
+        ):
+            deteccoes.append({
+                "posicao_x": x, "posicao_y": 0.45, "frame_idx": frame,
+                "recorte": np.full((40, 40, 3), valor, dtype=np.uint8),
+            })
+
+        pessoas = _agrupar_por_identidade(
+            deteccoes, ReconhecedorFake(), total_amostras=6
+        )
+
+        self.assertEqual(len(pessoas), 2)
+        self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [2, 4])
+
+    def test_participante_visto_em_duas_amostras_globais_e_preservado(self):
+        class ReconhecedorFake:
+            def feature(self, imagem):
+                return np.array([[float(imagem[0, 0, 0])]])
+
+            def match(self, a, b, _metrica):
+                return 1.0 if int(a[0, 0]) == int(b[0, 0]) else 0.20
+
+        deteccoes = [
+            {"posicao_x": 0.20, "posicao_y": 0.45, "frame_idx": 1,
+             "recorte": np.full((40, 40, 3), 10, dtype=np.uint8)},
+            {"posicao_x": 0.20, "posicao_y": 0.45, "frame_idx": 10,
+             "recorte": np.full((40, 40, 3), 10, dtype=np.uint8)},
+            {"posicao_x": 0.80, "posicao_y": 0.45, "frame_idx": 2,
+             "recorte": np.full((40, 40, 3), 20, dtype=np.uint8)},
+            {"posicao_x": 0.80, "posicao_y": 0.45, "frame_idx": 11,
+             "recorte": np.full((40, 40, 3), 20, dtype=np.uint8)},
+        ]
+
+        pessoas = _agrupar_por_identidade(
+            deteccoes, ReconhecedorFake(), total_amostras=30
+        )
+
+        self.assertEqual(len(pessoas), 2)
+        self.assertEqual(sorted(p["n_aparicoes"] for p in pessoas), [2, 2])
+
+    def test_yunet_alinha_rosto_com_os_cinco_pontos_antes_do_sface(self):
+        class ReconhecedorFake:
+            recebidos = None
+
+            def alignCrop(self, frame, face):
+                self.recebidos = face
+                return np.full((112, 112, 3), 7, dtype=np.uint8)
+
+        reconhecedor = ReconhecedorFake()
+        rosto = {
+            "x": 0.50, "y": 0.50, "w": 0.20, "h": 0.30,
+            "fonte": "yunet",
+            "pontos": [(0.45, 0.45), (0.55, 0.45), (0.50, 0.50),
+                       (0.46, 0.58), (0.54, 0.58)],
+        }
+
+        alinhado = rostos._alinhar_rosto_yunet(
+            np.zeros((200, 400, 3), dtype=np.uint8), rosto, reconhecedor
+        )
+
+        self.assertEqual(alinhado.shape, (112, 112, 3))
+        self.assertEqual(reconhecedor.recebidos.shape, (1, 14))
+
+    def test_limpeza_preserva_pontos_do_yunet(self):
+        rostos_limpos = _limpar_deteccoes([{
+            "x": 0.50, "y": 0.50, "w": 0.20, "h": 0.30,
+            "fonte": "yunet", "confianca": 0.9,
+            "pontos": [(0.45, 0.45)] * 5,
+        }])
+
+        self.assertEqual(len(rostos_limpos[0]["pontos"]), 5)
+
+    def test_visoes_duplicadas_no_mesmo_frame_sao_unidas_por_alta_similaridade(self):
+        class ReconhecedorFake:
+            def match(self, a, b, _metrica):
+                return float(a[0, 0] * b[0, 0])
+
+        grupos = [
+            {
+                "deteccoes": [{"frame_idx": 1}],
+                "embeddings": [np.array([[1.0]])],
+                "frames": {1},
+            },
+            {
+                "deteccoes": [{"frame_idx": 1}],
+                "embeddings": [np.array([[0.484]])],
+                "frames": {1},
+            },
+        ]
+
+        unidos = rostos._fundir_grupos_da_mesma_pessoa(
+            grupos, ReconhecedorFake(), 0.42
+        )
+
+        self.assertEqual(len(unidos), 1)
+
     def test_identidade_passageira_nao_vira_participante(self):
         class ReconhecedorFake:
             def feature(self, imagem):
@@ -360,11 +504,14 @@ class TestCore(unittest.TestCase):
         self.assertEqual(modos[-1], "SPLIT")
 
     def test_crop_solo_preserva_margem_do_rosto_na_borda(self):
-        x, _y, w, _h = _calcular_crop_seguro(
-            [(0.08, 0.38, 0.08)], 1920, 1080, 9 / 16
-        )
-        self.assertEqual(x, 0)
-        self.assertGreaterEqual(w, 608)
+        # Pessoa encostada na borda esquerda: o crop tem de encostar na borda
+        # tambem, e ainda assim conter a cabeca inteira.
+        alvo = (0.08, 0.38, 0.08)
+        crop = _calcular_crop_seguro([alvo], 1920, 1080, 9 / 16)
+        self.assertEqual(crop[0], 0)
+        cabecas = _caixas_cabecas([alvo], 1920, 1080)
+        ok, motivo = _validar_crop_alvos(crop, cabecas, 1920, 1080)
+        self.assertTrue(ok, f"cabeca cortada na borda: {motivo}")
 
     def test_crop_grupo_contem_as_duas_pessoas(self):
         x, _y, w, _h = _calcular_crop_seguro(
@@ -426,12 +573,17 @@ class TestCore(unittest.TestCase):
         self.assertEqual(plano[88]["modo"], "SPLIT")
         self.assertEqual(plano[89]["modo"], "SOLO_A")
 
-    def test_crop_de_rosto_pequeno_mantem_plano_aberto(self):
-        _x, _y, w, h = _calcular_crop_seguro(
-            [(0.50, 0.38, 0.03)], 1920, 1080, 9 / 16
-        )
-        self.assertGreaterEqual(w, 516)
-        self.assertGreaterEqual(h, 918)
+    def test_crop_de_rosto_pequeno_fecha_sem_cortar_a_cabeca(self):
+        # Rosto pequeno = plano aberto na fonte. O quadro fecha para a pessoa
+        # nao ficar perdida no meio do cenario (antes ele usava sempre a altura
+        # inteira, e o resultado era gente minuscula com meia tela de parede),
+        # mas o que nao pode em hipotese alguma e cortar a cabeca.
+        alvo = (0.50, 0.38, 0.03)
+        crop = _calcular_crop_seguro([alvo], 1920, 1080, 9 / 16)
+        self.assertLess(crop[2], 608, "deveria fechar em relacao ao quadro aberto")
+        cabecas = _caixas_cabecas([alvo], 1920, 1080)
+        ok, motivo = _validar_crop_alvos(crop, cabecas, 1920, 1080)
+        self.assertTrue(ok, f"cabeca cortada: {motivo}")
 
     def test_fallback_split_preenche_os_dois_paineis_sem_desfoque(self):
         frame = np.zeros((360, 640, 3), dtype=np.uint8)

@@ -9,23 +9,29 @@ Duas abas:
 import os
 import sys
 import glob as glob_mod
+import importlib.util
 import logging
 import time
 from datetime import datetime
 
 from runtime import (
     configurar_ambiente,
+    discos_prontos,
     configurar_logs,
     escolher_porta,
     garantir_instancia_unica,
     pasta_dados,
     registrar_status,
+    suprimir_janelas_de_console,
 )
 
 INICIO_APP = time.perf_counter()
 PASTA_BASE = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 os.chdir(PASTA_BASE)
 configurar_ambiente()
+# Antes de qualquer ffmpeg: sem isso cada chamada pisca uma janela de console
+# por cima do que o usuario estiver fazendo, durante todo o processamento.
+suprimir_janelas_de_console()
 ARQUIVO_LOG = configurar_logs()
 
 if not garantir_instancia_unica():
@@ -43,6 +49,13 @@ try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
+# Telemetria desligada ANTES de importar o Gradio — depois do import ja e tarde,
+# ele avisa servidores externos ao subir. Nada disso e necessario para o app
+# funcionar, e o material que passa por aqui e do usuario. setdefault para quem
+# quiser religar por variavel de ambiente conseguir.
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 import gradio as gr
 from pipeline import etapa1_detectar_pessoas, etapa2_analisar, etapa3_processar, limpar_cancelamento
@@ -76,6 +89,7 @@ NICHOS = {
     "Crime":     "crime",
     "Esporte":   "esporte",
     "Educação":  "educacao",
+    "Religioso": "religioso",
 }
 QUALIDADES = {
     "1080p — Full HD (recomendado)": "1080p",
@@ -371,6 +385,19 @@ body { margin: 0 !important; overflow-y: auto; }
         scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important;
     }
 }
+#vc-dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 32px 18px; text-align: center; cursor: default;
+    border: 2px dashed var(--vc-border-strong); border-radius: 14px;
+    background: var(--vc-raised); transition: border-color .15s, background .15s;
+}
+#vc-dropzone.vc-ativo { border-color: var(--vc-accent); background: var(--vc-surface); }
+#vc-dropzone.vc-carregado { border-style: solid; border-color: var(--vc-accent); }
+.vc-dropzone-icone { font-size: 2rem; line-height: 1; }
+.vc-dropzone-texto { font-size: .95rem; font-weight: 600; color: var(--vc-text, #e7ecf3); }
+.vc-dropzone-dica { font-size: .74rem; color: var(--vc-muted); }
+.vc-dropzone-arquivo { font-size: .82rem; color: var(--vc-accent); word-break: break-all; }
+.vc-dropzone-arquivo:empty { display: none; }
 """
 
 # O CSS injetado pelo Gradio é escopado dentro de ``.contain`` e não alcança
@@ -385,6 +412,27 @@ HEAD = """
 }
 </style>
 """
+
+# Na janela nativa o WebView2 entrega o caminho real do arquivo arrastado, então
+# o vídeo é lido direto do disco: nada de upload nem de cópia, o que importa em
+# podcasts de vários GB. No navegador esse caminho não existe (a File API o
+# esconde de propósito), e lá vale o seletor de arquivo comum.
+JANELA_NATIVA = importlib.util.find_spec("webview") is not None
+
+ZONA_ARRASTE = """
+<div id="vc-dropzone">
+    <div class="vc-dropzone-icone">🎬</div>
+    <div class="vc-dropzone-texto">Arraste o vídeo aqui</div>
+    <div class="vc-dropzone-dica">Lido direto do disco, sem upload — funciona com arquivos de vários GB.</div>
+    <div class="vc-dropzone-arquivo"></div>
+</div>
+"""
+
+
+def registrar_video_arrastado(caminho: str) -> None:
+    """Guarda o vídeo solto na janela nativa. Chamado por app_desktop.py."""
+    _estado["caminho_video"] = caminho
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ABA 1 — CORTE VIRAL (funções)
@@ -415,10 +463,22 @@ def ao_baixar_link(url):
 
 
 def ao_detectar_pessoas(arquivo_video):
-    if arquivo_video is None:
-        return "❌ Envie um vídeo primeiro.", gr.update(visible=False), [], gr.update(choices=[], value=[])
+    # O vídeo chega por três vias — arrastado na janela, baixado de um link ou
+    # escolhido no seletor do navegador. As duas primeiras já deixaram o caminho
+    # em _estado, que por isso manda: o seletor só é lido no modo navegador,
+    # onde a janela nativa (e o arrastar) não existem.
+    caminho = _estado.get("caminho_video") or ""
+    if not caminho and not JANELA_NATIVA and arquivo_video is not None:
+        caminho = arquivo_video.name if hasattr(arquivo_video, 'name') else str(arquivo_video)
+    caminho = str(caminho).strip().strip('"')
 
-    caminho = arquivo_video.name if hasattr(arquivo_video, 'name') else arquivo_video
+    if not caminho:
+        _estado["pessoas"] = []
+        return "❌ Arraste um vídeo para a janela primeiro.", [], gr.update(choices=[], value=[])
+    if not os.path.isfile(caminho):
+        _estado["pessoas"] = []
+        return f"❌ Arquivo não encontrado:\n{caminho}", [], gr.update(choices=[], value=[])
+
     _estado["caminho_video"] = caminho
 
     log_lines = []
@@ -429,21 +489,18 @@ def ao_detectar_pessoas(arquivo_video):
         _estado["pessoas"] = pessoas
 
         if not pessoas:
-            return "\n".join(log_lines) + "\n⚠️ Nenhuma pessoa detectada.", gr.update(visible=False), [], gr.update(choices=[], value=[])
+            return ("\n".join(log_lines) + "\n⚠️ Nenhuma pessoa detectada.",
+                    [], gr.update(choices=[], value=[]))
 
         previews = [(p["preview_path"], p["nome"]) for p in pessoas if "preview_path" in p]
         opcoes   = [p["nome"] for p in pessoas]
-
-        return (
-            "\n".join(log_lines),
-            gr.update(visible=True),
-            previews,
-            gr.update(choices=opcoes, value=opcoes)
-        )
+        return "\n".join(log_lines), previews, gr.update(choices=opcoes, value=opcoes)
 
     except Exception as e:
         import traceback
-        return f"❌ Erro:\n{str(e)}\n{traceback.format_exc()}", gr.update(visible=False), [], gr.update(choices=[], value=[])
+        _estado["pessoas"] = []
+        return (f"❌ Erro:\n{str(e)}\n{traceback.format_exc()}",
+                [], gr.update(choices=[], value=[]))
 
 
 def ao_analisar(idioma_label, modelo_label, nicho_label, duracao_min, duracao_max, modo_offline):
@@ -942,16 +999,30 @@ def ao_exportar_legenda_srt(
 # INTERFACE PRINCIPAL (Tabs)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def criar_interface():
-    with gr.Blocks(title="Viral Cutter v2") as app:
+def _obter_status_hardware() -> str:
+    try:
+        from ffmpeg_utils import nvenc_disponivel
+        import torch
+        if torch.cuda.is_available():
+            nome_gpu = torch.cuda.get_device_name(0)
+            nvenc_txt = " • NVENC Acelerado" if nvenc_disponivel() else ""
+            return f"⚡ {nome_gpu}{nvenc_txt}"
+    except Exception:
+        pass
+    return "💻 Processamento local"
 
-        gr.HTML("""
+
+def criar_interface():
+    status_hw = _obter_status_hardware()
+    with gr.Blocks(title="Viral Cutter Classic") as app:
+
+        gr.HTML(f"""
         <div class="classic-topbar">
             <div class="classic-brand">
                 <strong>Viral Cutter Classic</strong>
                 <span>2.3.2</span>
             </div>
-            <span class="classic-status">Processamento local</span>
+            <span class="classic-status">{status_hw}</span>
         </div>
         """)
 
@@ -976,8 +1047,11 @@ def criar_interface():
                         """)
 
                     with gr.Column(scale=4, min_width=470, elem_classes="workspace-panel"):
-                        gr.HTML('<p class="sec">01 — Upload do Vídeo</p>')
-                        arquivo_video = gr.File(label="Vídeo longo", file_types=["video"])
+                        gr.HTML('<p class="sec">01 — Vídeo</p>')
+                        gr.HTML(ZONA_ARRASTE, visible=JANELA_NATIVA)
+                        arquivo_video = gr.File(
+                            label="Vídeo longo", file_types=["video"], visible=not JANELA_NATIVA,
+                        )
                         gr.HTML('<p style="font-size:11px;color:var(--vc-muted);text-align:center;margin:5px 0;">— ou —</p>')
                         with gr.Row():
                             url_video = gr.Textbox(
@@ -991,7 +1065,7 @@ def criar_interface():
                             btn_detectar = gr.Button("DETECTAR PESSOAS", scale=1)
                         log_deteccao = gr.Textbox(label="", interactive=False, lines=3, elem_classes="output-log")
 
-                        with gr.Group(visible=False) as painel_rostos:
+                        with gr.Group() as painel_rostos:
                             gr.HTML('<p class="sec">02 — Escolha Quem Priorizar</p>')
                             gr.Markdown("*Selecione as pessoas que devem ser priorizadas no enquadramento.*")
                             galeria_rostos = gr.Gallery(
@@ -1112,10 +1186,15 @@ def criar_interface():
                     inputs=[url_video],
                     outputs=[log_deteccao, arquivo_video],
                 )
+                # `show_progress="minimal"`: o overlay padrão do Gradio fica preso
+                # em "processing" na galeria e no checkbox, porque eles estão
+                # dentro de um Group que passa a visível no mesmo evento que
+                # preenche seus filhos. Os dados chegam certos — só o indicador
+                # não some, e o app parece travado por tempo indeterminado.
                 btn_detectar.click(
                     fn=ao_detectar_pessoas,
                     inputs=[arquivo_video],
-                    outputs=[log_deteccao, painel_rostos, galeria_rostos, pessoas_opcoes],
+                    outputs=[log_deteccao, galeria_rostos, pessoas_opcoes],
                 )
                 btn_analisar.click(
                     fn=ao_analisar,
@@ -1345,6 +1424,6 @@ if __name__ == "__main__":
             PASTA_BASE,
             pasta_dados(),
             os.path.expanduser("~"),
-            "D:\\",
+            *discos_prontos(),
         ]
     )

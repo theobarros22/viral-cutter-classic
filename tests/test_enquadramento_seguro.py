@@ -366,3 +366,69 @@ def test_panels_come_before_the_open_frame():
     assert layout["tipo"] == "split"
     assert layout["top_scale"][1] + layout["bot_scale"][1] == SAIDA_H
     assert not relatorio.get("revisar")
+
+
+def test_alvo_migra_para_o_falante_mesmo_com_sinal_esparso():
+    """A deteccao de fala so preenche 1 frame a cada ~15; o resto vem None.
+
+    Se o None interrompesse a contagem da histerese, a espera de 1,5s viraria
+    ~22s e o alvo nunca migraria dentro de um clipe — foi o que deixou os
+    primeiros segundos de um clipe enquadrados no logo da parede em vez da
+    pessoa que falava.
+    """
+    from enquadramento import _alvos_seguindo_falante
+
+    fps = 24.0
+    x_cena = 0.68          # onde a cena "viu" alguem (na verdade, o logo)
+    x_falante = 0.26       # onde a pessoa realmente esta
+
+    # 6 segundos de sinal, com valor a cada 15 frames e None no resto
+    posicoes = []
+    for i in range(int(fps * 6)):
+        posicoes.append(x_falante if i % 15 == 0 else None)
+
+    alvos = _alvos_seguindo_falante(posicoes, x_cena, fps, limiar_s=1.5)
+
+    # Comeca ja no falante: no primeiro instante do clipe nao ha nada anterior
+    # a preservar, e esperar 1,5s significaria abrir apontando para o lugar
+    # errado — que foi o defeito real (o quadro abria no logo da parede).
+    assert abs(alvos[0] - x_falante) < 1e-6, "deve abrir ja no falante"
+    assert abs(alvos[int(fps * 2)] - x_falante) < 1e-6
+    assert abs(alvos[-1] - x_falante) < 1e-6
+
+
+def test_histerese_segura_troca_no_meio_da_cena():
+    """No meio da cena, a histerese continua valendo: nao troca por um pico.
+
+    Aqui a cena comeca concordando com o falante; a troca so acontece depois
+    de 1,5s insistindo, e um unico valor divergente nao move o quadro.
+    """
+    from enquadramento import _alvos_seguindo_falante
+
+    fps = 24.0
+    x_cena = 0.26
+    posicoes = []
+    for i in range(int(fps * 6)):
+        if i % 15:
+            posicoes.append(None)
+        elif i == 45:          # um unico pico isolado para o outro lado
+            posicoes.append(0.73)
+        else:
+            posicoes.append(0.26)
+
+    alvos = _alvos_seguindo_falante(posicoes, x_cena, fps, limiar_s=1.5)
+    assert all(abs(a - x_cena) < 1e-6 for a in alvos), (
+        "um valor isolado nao pode mover o quadro"
+    )
+
+
+def test_alvo_nao_migra_com_falante_perto_do_alvo_da_cena():
+    """Movimento na cadeira nao pode ser lido como troca de pessoa."""
+    from enquadramento import _alvos_seguindo_falante
+
+    fps = 24.0
+    x_cena = 0.30
+    posicoes = [0.33 if i % 15 == 0 else None for i in range(int(fps * 6))]
+
+    alvos = _alvos_seguindo_falante(posicoes, x_cena, fps, limiar_s=1.5)
+    assert all(abs(a - x_cena) < 1e-6 for a in alvos)

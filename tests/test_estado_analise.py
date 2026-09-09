@@ -182,3 +182,40 @@ def test_checkpoint_falls_back_to_direct_write(tmp_path, monkeypatch):
 
     gravado = json.loads(destino.read_text(encoding="utf-8"))
     assert gravado["status"] == "processando"
+
+
+def test_persistir_nao_apaga_transcricao_salva_com_cache_vazio(tmp_path, monkeypatch):
+    """Detectar pessoas numa sessao nova nao pode zerar a analise do disco.
+
+    _persistir_estado grava o cache em memoria. Na etapa 1 de uma sessao nova
+    esse cache so tem 'pessoas' — sem a guarda, a transcricao e os segmentos
+    salvos eram sobrescritos por vazio e a proxima execucao transcrevia tudo
+    de novo (meia hora de Whisper).
+    """
+    import pipeline
+
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"x" * 32)
+    monkeypatch.setattr(pipeline, "_pasta_estado", lambda: str(tmp_path))
+
+    # analise completa ja no disco
+    pipeline._cache.clear()
+    pipeline._cache.update({
+        "pessoas": [{"id": 0, "posicao_x": 0.3}],
+        "transcricao": {"text": "conteudo transcrito", "segments": []},
+        "segmentos": [{"titulo": "a", "inicio": 0, "fim": 10}],
+    })
+    pipeline._persistir_estado(str(video))
+
+    # sessao nova: so a etapa 1 rodou, cache sem transcricao nem segmentos
+    pipeline._cache.clear()
+    pipeline._cache.update({"pessoas": [{"id": 0, "posicao_x": 0.9}]})
+    pipeline._persistir_estado(str(video))
+
+    from checkpoint import carregar_estado_analise
+    salvo = carregar_estado_analise(str(tmp_path), str(video))
+    assert salvo["transcricao"]["text"] == "conteudo transcrito"
+    assert len(salvo["segmentos"]) == 1
+    # e as pessoas novas, essas sim, substituem as antigas
+    assert salvo["pessoas"][0]["posicao_x"] == 0.9
+    pipeline._cache.clear()
