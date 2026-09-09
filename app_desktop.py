@@ -1,4 +1,4 @@
-"""
+﻿"""
 app_desktop.py
 --------------
 Ponto de entrada do Viral Cutter Classic como APLICATIVO DE JANELA.
@@ -11,10 +11,12 @@ Por que envolver em vez de reescrever: a interface tem mais de 1300 linhas
 testadas e em producao. Trocar a camada de exibicao nao mexe em nenhuma
 regra de negocio — corte, enquadramento e retomada seguem identicos.
 
-Se o WebView2 nao estiver disponivel na maquina, o app avisa e cai para o
-navegador, em vez de simplesmente nao abrir.
+Se o WebView2 nao estiver disponivel, o app diz o que falta e para. Cair para
+o navegador entregaria um produto diferente sem avisar: sem a janela nativa o
+arrastar-e-soltar perde o caminho real do arquivo.
 """
 
+import json
 import logging
 import os
 import sys
@@ -108,26 +110,102 @@ def iniciar_servidor_gradio():
             interface.PASTA_BASE,
             runtime.pasta_dados(),
             os.path.expanduser("~"),
-            "D:\\",
+            *runtime.discos_prontos(),
         ],
     )
     return porta, app
 
 
-def abrir_no_navegador(porta: int) -> None:
-    """Ultimo recurso quando nao ha WebView2 na maquina."""
-    import webbrowser
-
-    print(
-        "   Janela nativa indisponivel (WebView2 ausente). "
-        "Abrindo no navegador padrao."
-    )
-    webbrowser.open(_url_local(porta))
+def _fechar_servidor_gradio(app) -> None:
+    """Libera a porta e o mutex quando a janela nativa e fechada."""
     try:
-        while True:
-            time.sleep(1.0)
-    except KeyboardInterrupt:
+        app.close()
+    except Exception as erro:
+        logging.getLogger("ViralCutter").warning(
+            "Falha ao encerrar o servidor local: %s", erro
+        )
+
+
+MSG_SEM_JANELA = (
+    "Nao foi possivel abrir a janela do Viral Cutter.\n\n"
+    "Falta o WebView2 Runtime nesta maquina. Baixe em:\n"
+    "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+    "O programa nao cai para o navegador de proposito: fora da janela nativa\n"
+    "o arrastar-e-soltar perde o caminho real do arquivo, e um podcast de\n"
+    "12 GB passaria a ser copiado por upload em vez de lido direto do disco."
+)
+
+
+def avisar_sem_janela(erro: str = "") -> None:
+    """Informa por que o app nao abriu, em vez de degradar em silencio."""
+    detalhe = f"\n\nDetalhe tecnico: {erro}" if erro else ""
+    logging.getLogger("ViralCutter").error("%s%s", MSG_SEM_JANELA, detalhe)
+    print(MSG_SEM_JANELA + detalhe)
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(
+            0, MSG_SEM_JANELA + detalhe, "Viral Cutter Classic", 0x10
+        )
+    except Exception:
         pass
+
+
+def _atualizar_zona(janela, texto: str, classe: str) -> None:
+    """Escreve o retorno do arraste na propria zona, sem passar pelo Gradio."""
+    seguro = json.dumps(texto)
+    janela.run_js(
+        f"""
+        var zona = document.querySelector('#vc-dropzone');
+        if (zona) {{
+            zona.className = {json.dumps(classe)};
+            var alvo = zona.querySelector('.vc-dropzone-arquivo');
+            if (alvo) alvo.textContent = {seguro};
+        }}
+        """
+    )
+
+
+def conectar_arrastar_soltar(janela) -> None:
+    """Liga o arrastar-e-soltar nativo da janela.
+
+    O WebView2 entrega o caminho real do arquivo solto (`pywebviewFullPath`), o
+    que a File API do navegador esconde de proposito. Com ele o video e lido
+    direto do disco: um podcast de 12 GB entra na hora, em vez de subir por
+    upload e ser copiado duas vezes.
+    """
+    import interface
+    from webview.dom import DOMEventHandler
+
+    def ao_soltar(evento):
+        arquivos = ((evento or {}).get("dataTransfer") or {}).get("files") or []
+        for arquivo in arquivos:
+            caminho = (arquivo or {}).get("pywebviewFullPath")
+            if caminho and os.path.isfile(caminho):
+                interface.registrar_video_arrastado(caminho)
+                _atualizar_zona(janela, os.path.basename(caminho), "vc-carregado")
+                return
+        _atualizar_zona(janela, "Solte um arquivo de video.", "")
+
+    def registrar(_=None):
+        # A zona so existe depois que o Gradio monta a interface, o que acontece
+        # bem depois do `loaded` da pagina. Por isso a espera ativa.
+        limite = time.monotonic() + 30.0
+        while time.monotonic() < limite:
+            zona = janela.dom.get_element("#vc-dropzone")
+            if zona is not None:
+                # Sem cancelar o `dragover` o navegador recusa o drop. O
+                # preventDefault roda em JS na hora; o debounce so evita que
+                # cada pixel de arrasto vire uma chamada ao Python.
+                zona.on("dragover", DOMEventHandler(lambda _e: None, prevent_default=True, debounce=250))
+                zona.on("drop", DOMEventHandler(ao_soltar, prevent_default=True))
+                return
+            time.sleep(0.5)
+        logging.getLogger("ViralCutter").warning(
+            "Zona de arraste nao apareceu; o arrastar-e-soltar ficou desligado."
+        )
+
+    janela.events.loaded += registrar
 
 
 def main() -> int:
@@ -149,12 +227,12 @@ def main() -> int:
 
     try:
         import webview
-    except ImportError:
-        abrir_no_navegador(porta)
-        return 0
+    except ImportError as erro:
+        avisar_sem_janela(str(erro))
+        return 1
 
     largura, altura = _dimensoes_para_a_tela()
-    webview.create_window(
+    janela = webview.create_window(
         TITULO_JANELA,
         _url_local(porta),
         width=largura,
@@ -163,11 +241,13 @@ def main() -> int:
         background_color="#101014",
         text_select=True,
     )
+    conectar_arrastar_soltar(janela)
     try:
         webview.start()
     except Exception as erro:
-        print(f"   Falha ao abrir a janela nativa: {erro}")
-        abrir_no_navegador(porta)
+        avisar_sem_janela(str(erro))
+        return 1
+    _fechar_servidor_gradio(_app)
     return 0
 
 
