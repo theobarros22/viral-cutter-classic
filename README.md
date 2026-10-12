@@ -61,7 +61,13 @@ Alterações na branch `main` passam por revisão e validação antes da integra
 
 ## Imagens
 
-As capturas de tela do programa ficam em `docs/images/`. Não publique vídeos privados, chaves, caminhos pessoais ou dados de clientes.
+As capturas de tela do programa ficam em [`docs/images/`](docs/images/). Não publique vídeos privados, chaves, caminhos pessoais ou dados de clientes.
+
+## Apresentação e colaboração
+
+Veja o [pacote de apresentação](docs/presentation/) com roteiro, storyboard e textos de divulgação. O projeto aceita Issues, relatos de bugs, testes com mídia autorizada e Pull Requests para `develop`.
+
+Quando disponível, o vídeo de apresentação ficará em `docs/media/`.
 
 ## Status
 
