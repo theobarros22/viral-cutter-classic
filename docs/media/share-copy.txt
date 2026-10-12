@@ -1,0 +1,1 @@
+O Viral Cutter Classic transforma podcasts e entrevistas longas em cortes verticais 9:16 com detecção de participantes, enquadramento seguro e processamento local. O projeto é colaborativo — contribua com ideias, testes e Pull Requests no GitHub.
