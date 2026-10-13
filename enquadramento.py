@@ -71,12 +71,10 @@ PASSO_DETECCAO_CENA = 2
 # falsos positivos como rostos na TV do cenário, estátuas e manequins.
 MIN_TAMANHO_ROSTO = 0.018
 
-# Teto de plausibilidade: num podcast nenhum rosto ocupa um terco da largura
-# do quadro. Medido no clipe 13 do Papo Reto #60, um falso positivo de
-# tam=0.358 na estante (x=0.81) fazia a cena inteira cair em "sem modo
-# seguro" — descartar o alvo devolve o crop central aberto, que e o certo
-# para um plano aberto.
-MAX_TAMANHO_ROSTO = 0.32
+# Teto de plausibilidade para rostos reais (inclui close-up de ate 75% da largura).
+# Rostos gigantes espurios encostados na borda (ex.: estante clipe 13) sao filtrados
+# geometricamente em _caixa_cabeca sem descartar close-ups legitimos.
+MAX_TAMANHO_ROSTO = 0.75
 
 # Um bloco de cena so pode conter posicoes de rosto que caibam TODAS no
 # mesmo crop. O criterio nao e um limiar arbitrario: e a folga real que
@@ -120,8 +118,6 @@ FAIXA_CENTRAL_MINIMA = 0.15
 # estátuas na estante ficam ALTOS (Y < 0.30); objetos na mesa em primeiro
 # plano ficam BAIXOS (Y > 0.72). Diagnóstico real (Papo Reto): pessoas em
 # Y=0.43 e Y=0.57; TV em Y=0.13, estátua em Y=0.25, objetos em Y=0.79-0.90.
-# Filtro com fallback: se uma cena não tem NENHUM rosto nesta zona, ele é
-# ignorado (não descarta a cena inteira).
 ZONA_ROSTO_Y_MIN = 0.30
 ZONA_ROSTO_Y_MAX = 0.72
 
@@ -323,6 +319,10 @@ def _caixa_humana(alvo, largura: int, altura: int):
     rosto_w = tam * largura
     rosto_h = rosto_w * ALTURA_ROSTO_SOBRE_LARGURA
 
+    meia_cabeca_w = rosto_w * LARGURA_CABECA_ROSTO / 2.0
+    if tam > 0.32 and (cx + meia_cabeca_w > float(largura) * 1.05 or cx - meia_cabeca_w < -float(largura) * 0.05):
+        return None
+
     x0 = cx - rosto_w * LARGURA_OMBROS_ROSTO / 2.0
     x1 = cx + rosto_w * LARGURA_OMBROS_ROSTO / 2.0
     y0 = cy - rosto_h * ALTURA_CABECA_ROSTO
@@ -356,6 +356,9 @@ def _caixa_cabeca(alvo, largura: int, altura: int):
 
     meia_w = rosto_w * LARGURA_CABECA_ROSTO / 2.0
     meia_h = rosto_h * ALTURA_CABECA_META
+
+    if tam > 0.32 and (cx + meia_w > float(largura) * 1.05 or cx - meia_w < -float(largura) * 0.05):
+        return None
 
     return (
         max(0.0, min(float(largura), cx - meia_w)),
@@ -392,8 +395,19 @@ def _validar_crop_alvos(crop, caixas: list, largura: int, altura: int) -> tuple:
     margem_y = MARGEM_SEGURA_BORDA * h
 
     for x0, y0, x1, y1 in caixas:
-        if (x1 - x0) + 2 * margem_x > w or (y1 - y0) + 2 * margem_y > h:
+        largura_humana = x1 - x0
+        altura_humana = y1 - y0
+
+        encosta_borda_x = (x0 <= TOLERANCIA_BORDA_PX or x1 >= largura - TOLERANCIA_BORDA_PX)
+        crop_cobre_largura_total = (w >= largura - TOLERANCIA_BORDA_PX)
+        if largura_humana + 2 * margem_x > w and not (crop_cobre_largura_total and encosta_borda_x):
             return False, "pessoa_maior_que_o_quadro"
+
+        encosta_borda_y = (y0 <= TOLERANCIA_BORDA_PX or y1 >= altura - TOLERANCIA_BORDA_PX)
+        crop_cobre_altura_total = (h >= altura - TOLERANCIA_BORDA_PX)
+        if altura_humana + 2 * margem_y > h and not (crop_cobre_altura_total and encosta_borda_y):
+            return False, "pessoa_maior_que_o_quadro"
+
         if x0 < x + margem_x and x > TOLERANCIA_BORDA_PX:
             return False, "pessoa_cortada_na_esquerda"
         if x1 > x + w - margem_x and (x + w) < largura - TOLERANCIA_BORDA_PX:
@@ -454,7 +468,9 @@ def _crop_validado(alvos: list, largura: int, altura: int, proporcao: float) -> 
     return crop, ok, motivo
 
 
-def _geometria_fallback_split(largura: int, altura: int, saida_w: int, saida_h: int) -> dict:
+def _geometria_fallback_split(
+    largura: int, altura: int, saida_w: int, saida_h: int, alvos: list = None
+) -> dict:
     """Dois painéis horizontais empilhados preenchendo todo o 9:16, sem blur."""
     topo_h = saida_h // 2
     base_h = saida_h - topo_h
@@ -469,12 +485,29 @@ def _geometria_fallback_split(largura: int, altura: int, saida_w: int, saida_h: 
         y = max(0, (altura - crop_h) // 2)
         return (x, y, crop_w, crop_h)
 
+    # Se há alvo em close-up (>0.32), centraliza os painéis nele para não cortar a cabeça
+    esq_topo = 0
+    esq_base = largura
+    alvo_principal = alvos[0] if alvos and len(alvos) > 0 else None
+    if alvo_principal and len(alvo_principal) >= 3:
+        try:
+            tam_p = float(alvo_principal[2])
+            if tam_p > 0.32:
+                proporcao = saida_w / float(topo_h)
+                crop_h = min(altura, int(round(largura / proporcao)))
+                crop_w = min(largura, int(round(crop_h * proporcao)))
+                cx = float(alvo_principal[0]) * largura
+                esq_topo = int(round(cx - crop_w / 2.0))
+                esq_base = esq_topo
+        except (TypeError, ValueError, IndexError):
+            pass
+
     return {
         "tipo": "split",
         "modo_final": "FALLBACK_SPLIT",
-        "top_crop": painel(topo_h, 0),
+        "top_crop": painel(topo_h, esq_topo),
         "top_scale": (saida_w, topo_h),
-        "bot_crop": painel(base_h, largura),
+        "bot_crop": painel(base_h, esq_base),
         "bot_scale": (saida_w, base_h),
     }
 
@@ -857,12 +890,12 @@ def _ajustar_segmentos_pelos_frames(
             posicoes = _posicoes_do_intervalo(ini, fim, _alvo_x)
 
             if not posicoes:
-                # Shot curto entre duas amostras: le o proprio video.
-                if detector is None:
+                # Shot curto entre duas amostras: le o proprio video se disponivel.
+                if detector is None and caminho_video:
                     from rostos import _inicializar_detector, detectar_rostos_robusto
                     detector = _inicializar_detector()
                     cap = cv2.VideoCapture(caminho_video)
-                if detector is not None and cap is not None:
+                if detector is not None and cap is not None and cap.isOpened():
                     from rostos import detectar_rostos_robusto
                     meio = (ini + fim) // 2
                     cap.set(cv2.CAP_PROP_POS_FRAMES, meio)
@@ -877,6 +910,14 @@ def _ajustar_segmentos_pelos_frames(
                             if escolhido is not None:
                                 posicoes = [(meio, float(escolhido["x"]),
                                              float(escolhido["y"]), float(escolhido["w"]))]
+
+            if not posicoes and _alvo_x is not None:
+                # Transição de câmera para outro alvo: se nenhuma detecção no intervalo
+                # confirmou o alvo antigo, invalida o alvo antigo e reavalia as pessoas
+                # presentes na nova tomada para não seguir um ponto vazio.
+                posicoes_livres = _posicoes_do_intervalo(ini, fim, alvo_x=None)
+                if posicoes_livres:
+                    posicoes = posicoes_livres
 
             if not posicoes:
                 ajustados.append(seg)
@@ -1144,7 +1185,7 @@ def _calcular_filtros_shot(
         return layout, (ok_a and ok_b), (motivo_a or motivo_b)
 
     def _fallback():
-        layout = _geometria_fallback_split(largura, altura, saida_w, saida_h)
+        layout = _geometria_fallback_split(largura, altura, saida_w, saida_h, alvos=[alvo_a, alvo_b])
         caixas = _caixas_cabecas([alvo_a, alvo_b], largura, altura)
         if not caixas:
             # Sem gente detectada: os dois painéis cobrem a largura inteira,
@@ -1163,7 +1204,15 @@ def _calcular_filtros_shot(
     if modo == "FALLBACK_SPLIT":
         layout, ok, motivo = _fallback()
         if not ok:
-            _registrar(relatorio, "quadro_aberto_por_seguranca")
+            caixas_impossiveis = any(
+                float(a[2]) * LARGURA_CABECA_ROSTO > 1.0
+                for a in (alvo_a, alvo_b)
+                if len(a) > 2 and a[2]
+            )
+            if caixas_impossiveis:
+                _registrar(relatorio, "sem_modo_seguro", revisar=True, instante=instante)
+            else:
+                _registrar(relatorio, "quadro_aberto_por_seguranca")
             return _quadro_aberto(
                 [alvo_a, alvo_b], largura, altura, saida_w, saida_h
             )
@@ -1211,7 +1260,15 @@ def _calcular_filtros_shot(
         _registrar(relatorio, "degradado_para_paineis_horizontais")
         return layout_fb
 
-    _registrar(relatorio, "quadro_aberto_por_seguranca")
+    caixas_impossiveis = any(
+        float(a[2]) * LARGURA_CABECA_ROSTO > 1.0
+        for a in (alvo_a, alvo_b)
+        if len(a) > 2 and a[2]
+    )
+    if caixas_impossiveis:
+        _registrar(relatorio, "sem_modo_seguro", revisar=True, instante=instante)
+    else:
+        _registrar(relatorio, "quadro_aberto_por_seguranca")
     return _quadro_aberto(
         [alvo_a, alvo_b], largura, altura, saida_w, saida_h
     )
@@ -1754,19 +1811,34 @@ def _analisar_rostos_por_cena(
 def _filtrar_rostos_na_zona_de_cabeca(rostos: list) -> tuple:
     """
     Separa posições X e Y de rostos, priorizando os que estão na zona
-    vertical de cabeça de quem está sentado (ZONA_ROSTO_Y_MIN..MAX).
+    vertical plausível de pessoas (em pé ou sentadas).
 
-    Falsos positivos do cenário caem fora: TV/quadros/estátuas ficam altos
-    (Y baixo), objetos na mesa em primeiro plano ficam baixos (Y alto).
-
-    Fallback: se NENHUM rosto está na zona, devolve todos — melhor um crop
-    impreciso do que uma cena tratada como B-roll sem gente.
+    Falsos positivos de estante/TV são descartados quando a tomada já possui
+    dois participantes sentados estabelecidos. Quando há repórter/apresentador
+    em pé (Y < 0.30), ele é preservado e não descartado.
     """
-    na_zona = [
+    sentados = [
         r for r in rostos
         if ZONA_ROSTO_Y_MIN <= r["y"] <= ZONA_ROSTO_Y_MAX
     ]
-    usar = na_zona if na_zona else rostos
+    em_pe = [
+        r for r in rostos
+        if 0.15 <= r["y"] < ZONA_ROSTO_Y_MIN
+    ]
+
+    xs_sentados = [r["x"] for r in sentados]
+    tem_dois_sentados_afastados = (
+        len(sentados) >= 2
+        and (max(xs_sentados) - min(xs_sentados)) >= 0.28
+    )
+
+    if tem_dois_sentados_afastados:
+        usar = sentados
+    elif em_pe or sentados:
+        usar = em_pe + sentados
+    else:
+        usar = rostos
+
     return (
         [r["x"] for r in usar],
         [r["y"] for r in usar],
