@@ -84,6 +84,30 @@ def test_solo_near_border_is_recentered_not_cut():
     _validar_layout(layout, [(0.06, 0.42, 0.06)])
 
 
+def test_camera_cut_reanchors_when_previous_speaker_target_is_empty():
+    """Uma troca de camera nao pode continuar mirando o ponto da tomada anterior."""
+    segmento = {
+        "frame_ini": 0,
+        "frame_fim": 90,
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "plano": {"modo": "SOLO_A", "xa": 0.18, "xb": 0.18,
+                  "ya": 0.40, "yb": 0.40, "ta": 0.06, "tb": 0.06},
+    }
+    amostras = {
+        15: [{"x": 0.76, "y": 0.40, "w": 0.08}],
+        45: [{"x": 0.77, "y": 0.40, "w": 0.08}],
+        75: [{"x": 0.75, "y": 0.40, "w": 0.08}],
+    }
+
+    ajustado = enq._ajustar_segmentos_pelos_frames(
+        "", [segmento], LARGURA, ALTURA, 30.0, amostras
+    )
+
+    assert ajustado
+    assert ajustado[0]["plano"]["xa"] == pytest.approx(0.76, abs=0.02)
+
+
 def test_two_distant_people_degrade_to_split():
     plano = {
         "modo": "GRUPO",
