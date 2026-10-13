@@ -432,3 +432,97 @@ def test_alvo_nao_migra_com_falante_perto_do_alvo_da_cena():
 
     alvos = _alvos_seguindo_falante(posicoes, x_cena, fps, limiar_s=1.5)
     assert all(abs(a - x_cena) < 1e-6 for a in alvos)
+
+
+def test_rosto_em_close_up_maior_que_32_porcento_nao_e_descartado():
+    """Rosto real em close-up (>32% da largura) e alvo valido e preserva a cabeca inteira."""
+    alvo_close = (0.50, 0.40, 0.36)
+    # 1. Nao pode retornar None como se fosse falso positivo
+    caixa_cabeca = enq._caixa_cabeca(alvo_close, LARGURA, ALTURA)
+    assert caixa_cabeca is not None, "caixa_cabeca descartou rosto legitimo em close-up (> 32%)"
+    caixa_humana = enq._caixa_humana(alvo_close, LARGURA, ALTURA)
+    assert caixa_humana is not None, "caixa_humana descartou rosto legitimo em close-up (> 32%)"
+
+    # 2. No calcular filtros shot em 16:9, a cabeca (1.5 * 0.36 = 54% de 1920)
+    # nao cabe num crop 9:16 solo (31.7%), logo deve degradar com seguranca para
+    # paineis horizontais (FALLBACK_SPLIT), sem rotular como 'cena_sem_rosto_confiavel'.
+    plano = {"modo": "SOLO_A", "xa": 0.50, "ya": 0.40, "ta": 0.36}
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    assert "cena_sem_rosto_confiavel" not in relatorio.get("motivos", [])
+    assert layout["tipo"] == "split", "close-up que excede 9:16 solo deve usar paineis horizontais"
+    _validar_layout(layout, [alvo_close])
+    assert not relatorio.get("revisar")
+
+
+def test_close_up_em_fonte_vertical_mantem_modo_solo():
+    """Em fonte vertical (1080x1920), close-up de 36% da largura cabe em SOLO."""
+    alvo_close = (0.50, 0.40, 0.36)
+    plano = {"modo": "SOLO_A", "xa": 0.50, "ya": 0.40, "ta": 0.36}
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, SAIDA_W, SAIDA_H, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    assert layout["tipo"] == "solo"
+    _validar_layout(layout, [alvo_close])
+    assert not relatorio.get("revisar")
+
+
+def test_close_up_impossivel_sem_modo_seguro_marca_revisar():
+    """Composicao sem enquadramento seguro possivel deve ser marcada para revisar."""
+    # Rosto de 70% da largura em 16:9: cabeca de 1.5 * 0.70 * 1920 = 2016px > 1920px.
+    # Nao cabe em solo nem em painel horizontal: DEVE marcar revisar.
+    plano = {"modo": "SOLO_A", "xa": 0.50, "ya": 0.40, "ta": 0.70}
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    assert relatorio.get("revisar") is True, "composicao que corta cabeca tem que marcar revisar"
+
+
+def test_reporter_em_pe_nao_e_descartado_por_presenca_em_zona_sentada():
+    """Reporter externo ou apresentador em pe (Y < 0.30) nao pode ser descartado."""
+    amostras_rostos = [
+        {"x": 0.35, "y": 0.18, "w": 0.08},  # Reporter em pe
+        {"x": 0.75, "y": 0.45, "w": 0.05},  # Elemento na zona de sentados
+    ]
+    xs, ys, ws = enq._filtrar_rostos_na_zona_de_cabeca(amostras_rostos)
+    assert any(abs(x - 0.35) < 1e-4 for x in xs), "reporter em pe (Y=0.18) foi descartado pelo filtro de zona sentada"
+
+
+def test_reporter_em_pe_preserva_topo_da_cabeca_sem_corte():
+    """Enquadramento de reporter em pe deve conter a cabeca inteira sem cortar o topo."""
+    plano = {"modo": "SOLO_A", "xa": 0.35, "ya": 0.18, "ta": 0.08}
+    relatorio = {}
+    layout = enq._calcular_filtros_shot(
+        plano, LARGURA, ALTURA, SAIDA_W, SAIDA_H, relatorio=relatorio
+    )
+    _validar_layout(layout, [(0.35, 0.18, 0.08)])
+    assert "cabeca_cortada_no_topo" not in relatorio.get("motivos", [])
+    assert not relatorio.get("revisar")
+
+
+def test_transicao_de_camera_invalida_alvo_antigo_e_reancora_no_novo():
+    """Troca de camera para outro alvo nao pode ficar presa no alvo antigo vazio."""
+    seg = {
+        "plano": {"modo": "SOLO_A", "xa": 0.25, "ya": 0.40, "ta": 0.08},
+        "frame_ini": 100,
+        "frame_fim": 200,
+        "start_s": 100 / 30.0,
+        "end_s": 200 / 30.0,
+    }
+    # Na nova camera (frames 100-200), o alvo consistente esta em x=0.75
+    amostras_por_frame = {
+        f: [{"x": 0.75, "y": 0.40, "w": 0.08}]
+        for f in range(100, 200, 15)
+    }
+    ajustados = enq._ajustar_segmentos_pelos_frames(
+        None, [seg], LARGURA, ALTURA, 30.0, amostras_por_frame=amostras_por_frame
+    )
+    assert len(ajustados) >= 1
+    # O shot reancorado deve apontar para o alvo real (0.75), nao continuar em 0.25
+    novo_xa = ajustados[0]["plano"]["xa"]
+    assert abs(novo_xa - 0.75) < 0.05, f"shot ficou preso no alvo antigo {novo_xa}, nao reancorou em 0.75"
+
