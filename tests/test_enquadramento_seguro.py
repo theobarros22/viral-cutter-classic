@@ -15,16 +15,20 @@ LARGURA, ALTURA = 1920, 1080
 SAIDA_W, SAIDA_H = 1080, 1920
 
 
-def _validar_layout(layout, alvos):
-    """Confere que todo alvo cabe com margem em pelo menos um painel do layout."""
-    caixas = enq._caixas_humanas(alvos, LARGURA, ALTURA)
+def _validar_layout(layout, alvos, largura=LARGURA, altura=ALTURA):
+    """Confere que todo alvo cabe com margem em pelo menos um painel do layout.
+
+    Conforme a regra definitiva: a cabeca inteira e obrigatoria; ombros e tronco
+    sao preferencia, pois em close-up os ombros nao cabem num 9:16/9:8.
+    """
+    caixas = enq._caixas_cabecas(alvos, largura, altura)
     if layout["tipo"] == "solo":
         crops = [layout["crop"]]
     else:
         crops = [layout["top_crop"], layout["bot_crop"]]
     for caixa in caixas:
         assert any(
-            enq._validar_crop_alvos(c, [caixa], LARGURA, ALTURA)[0] for c in crops
+            enq._validar_crop_alvos(c, [caixa], largura, altura)[0] for c in crops
         ), f"caixa {caixa} cortada em {layout}"
 
 
@@ -466,7 +470,7 @@ def test_close_up_em_fonte_vertical_mantem_modo_solo():
         plano, SAIDA_W, SAIDA_H, SAIDA_W, SAIDA_H, relatorio=relatorio
     )
     assert layout["tipo"] == "solo"
-    _validar_layout(layout, [alvo_close])
+    _validar_layout(layout, [alvo_close], SAIDA_W, SAIDA_H)
     assert not relatorio.get("revisar")
 
 
@@ -525,4 +529,3 @@ def test_transicao_de_camera_invalida_alvo_antigo_e_reancora_no_novo():
     # O shot reancorado deve apontar para o alvo real (0.75), nao continuar em 0.25
     novo_xa = ajustados[0]["plano"]["xa"]
     assert abs(novo_xa - 0.75) < 0.05, f"shot ficou preso no alvo antigo {novo_xa}, nao reancorou em 0.75"
-
