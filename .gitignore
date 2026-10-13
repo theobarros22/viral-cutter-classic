@@ -23,6 +23,7 @@ test_output/
 graphify-out/
 graphify_*_tmp.py
 *.bak
+.worktrees/
 
 # Ponteiro do worktree antigo (o repositorio agora e proprio)
 .git-worktree-antigo
