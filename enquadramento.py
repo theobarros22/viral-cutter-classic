@@ -98,8 +98,18 @@ LIMITE_SHOTS_FFMPEG = 200
 # Camera virtual: quanto o quadro persegue a pessoa a cada nova leitura e
 # qual a velocidade maxima de deslocamento (em larguras de quadro por
 # segundo). Valores altos tremem; baixos ficam para tras e cortam.
-FATOR_SUAVIZACAO_CAMERA = 0.45
-VELOCIDADE_MAXIMA_CAMERA = 0.25
+# Zona morta: enquanto o rosto se mexe menos que isto (fracao da largura do
+# crop), o quadro fica PARADO. Um operador de camera nao corrige cada balanco
+# de cabeca, e sem a zona morta o quadro treme junto com a deteccao.
+ZONA_MORTA_CAMERA = 0.05
+# Tempo caracteristico da mola: quanto a camera leva para alcancar o alvo.
+# Mais alto = mais suave e mais atrasado; mais baixo = mais colado e nervoso.
+TEMPO_SUAVIZACAO_CAMERA = 0.9
+VELOCIDADE_MAXIMA_CAMERA = 0.4
+# Abaixo desta fracao de amostras COM rosto o sinal nao sustenta uma
+# trajetoria: melhor um quadro parado e correto que uma camera perseguindo
+# ruido.
+FRACAO_MINIMA_DETECCOES = 0.2
 MAX_PONTOS_TRAJETORIA = 60  # teto por shot, para a expressao nao explodir
 # Quanto a camera pode se afastar do alvo do shot ao acompanhar a pessoa.
 # Acima disso ja nao e a mesma pessoa se mexendo: e o quadro indo embora.
@@ -905,7 +915,7 @@ def _ajustar_segmentos_pelos_frames(
                 plano["xa"] = plano["xb"] = float(np.median(xs))
                 plano["ya"] = plano["yb"] = float(np.median([p[2] for p in grupo]))
                 plano["ta"] = plano["tb"] = max(p[3] for p in grupo)
-                trajetoria = _suavizar_trajetoria(grupo, fps)
+                trajetoria = _suavizar_trajetoria(grupo, fps, largura_crop)
                 if len(trajetoria) > MAX_PONTOS_TRAJETORIA:
                     passo = len(trajetoria) // MAX_PONTOS_TRAJETORIA + 1
                     trajetoria = trajetoria[::passo] + [trajetoria[-1]]
@@ -978,29 +988,164 @@ def _reancorar_split(seg: dict, amostras_por_frame: dict, ini: int, fim: int) ->
     return {**seg, "plano": plano}
 
 
-def _suavizar_trajetoria(posicoes: list, fps: float) -> list:
-    """Transforma posicoes observadas numa trajetoria estavel de camera.
+def _mediana_movel(valores: list, janela: int = 3) -> list:
+    """Remove picos isolados de deteccao sem arredondar o movimento real."""
+    if janela < 3 or len(valores) < janela:
+        return list(valores)
+    meio = janela // 2
+    saida = []
+    for i in range(len(valores)):
+        inicio = i - meio
+        termino = i + meio + 1
+        if inicio < 0 or termino > len(valores):
+            # Janela incompleta na borda: a mediana de meia janela desloca o
+            # primeiro e o ultimo ponto, bem onde o quadro comeca e termina.
+            # Preservar o valor original ali e mais fiel que inventar media.
+            saida.append(float(valores[i]))
+            continue
+        saida.append(float(np.median(valores[inicio:termino])))
+    return saida
 
-    Duas coisas importam aqui: nao tremer (o rosto oscila alguns pixels entre
-    deteccoes) e nao ficar para tras quando a pessoa se desloca de verdade.
-    Uma media exponencial resolve o tremor; o limite de velocidade impede
-    que o quadro dispare atras de uma deteccao isolada e errada.
+
+def _preencher_lacunas(valores: list) -> list:
+    """Completa amostras sem rosto repetindo a ultima conhecida (e a primeira).
+
+    Sem isto, um frame perdido vira um buraco que a mola interpreta como
+    movimento brusco: o quadro dava um tranco a cada falha de deteccao.
+    """
+    saida = list(valores)
+    ultimo = None
+    for i, v in enumerate(saida):
+        if v is None:
+            saida[i] = ultimo
+        else:
+            ultimo = v
+    ultimo = None
+    for i in range(len(saida) - 1, -1, -1):
+        if saida[i] is None:
+            saida[i] = ultimo
+        else:
+            ultimo = saida[i]
+    return saida
+
+
+def _alvos_com_zona_morta(desejados: list, zona_morta: float) -> list:
+    """Alvo que so se desloca quando o rosto sai da zona de conforto.
+
+    A ancora fica parada enquanto a pessoa se mexe pouco. Quando ela passa da
+    zona morta, a ancora anda apenas o suficiente para ela voltar a borda da
+    zona. Resultado: quadro parado em movimento pequeno e acompanhamento real
+    quando ha deslocamento de verdade.
+    """
+    alvos = []
+    ancora = desejados[0]
+    for d in desejados:
+        if d - ancora > zona_morta:
+            ancora = d - zona_morta
+        elif ancora - d > zona_morta:
+            ancora = d + zona_morta
+        alvos.append(ancora)
+    return alvos
+
+
+def _mola_amortecida(alvos: list, tempos: list, tempo_suave: float,
+                     velocidade_maxima: float) -> list:
+    """Mola criticamente amortecida: alcanca o alvo sem ultrapassar nem oscilar.
+
+    Uma media exponencial (o que usavamos) acelera e para de forma mecanica.
+    A mola produz aceleracao e desaceleracao naturais, que e como uma camera
+    de verdade se move. Criticamente amortecida significa sem overshoot e sem
+    balanco em torno do alvo.
+    """
+    if not alvos:
+        return []
+    omega = 2.0 / max(0.05, tempo_suave)
+    atual = float(alvos[0])
+    velocidade = 0.0
+    saida = [atual]
+
+    for i in range(1, len(alvos)):
+        dt = tempos[i] - tempos[i - 1]
+        if dt <= 0:
+            saida.append(atual)
+            continue
+        alvo = float(alvos[i])
+        x = omega * dt
+        # Aproximacao racional de exp(-x): estavel, barata e sem math.exp.
+        decaimento = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x)
+        desvio = atual - alvo
+        limite = velocidade_maxima * tempo_suave
+        desvio = max(-limite, min(limite, desvio))
+        alvo_ajustado = atual - desvio
+        temporario = (velocidade + omega * desvio) * dt
+        velocidade = (velocidade - omega * temporario) * decaimento
+        resultado = alvo_ajustado + (desvio + temporario) * decaimento
+        # Trava o overshoot: se passou do alvo, para no alvo.
+        if (alvo - atual > 0) == (resultado > alvo):
+            resultado = alvo
+            velocidade = 0.0
+        atual = resultado
+        saida.append(atual)
+    return saida
+
+
+def _media_movel(valores: list, janela: int = 5) -> list:
+    """Passada final que apaga degraus de velocidade entre os pontos-chave."""
+    if janela < 2 or len(valores) < 2:
+        return list(valores)
+    meio = janela // 2
+    saida = []
+    for i in range(len(valores)):
+        inicio = max(0, i - meio)
+        termino = min(len(valores), i + meio + 1)
+        saida.append(sum(valores[inicio:termino]) / (termino - inicio))
+    return saida
+
+
+def _suavizar_trajetoria(posicoes: list, fps: float, largura_crop: float = None) -> list:
+    """Transforma posicoes observadas numa trajetoria de camera de verdade.
+
+    A versao anterior era uma media exponencial com limite de velocidade. Ela
+    nao tremia menos que a deteccao e corrigia cada balanco de cabeca, o que
+    deixa o quadro inquieto. Agora o sinal passa por cinco etapas, nesta ordem:
+
+    1. preenche amostras sem rosto, para um frame perdido nao virar tranco;
+    2. mediana movel, que mata pico isolado de deteccao errada;
+    3. zona morta, que mantem o quadro parado em movimento pequeno;
+    4. mola criticamente amortecida, que acelera e freia como uma camera;
+    5. media movel final, que apaga degraus entre os pontos-chave.
+
+    Devolve [] quando ha deteccao de menos para sustentar movimento. Nesse
+    caso o chamador usa quadro parado, que e sempre melhor que perseguir ruido.
     """
     if not posicoes:
         return []
 
-    suave = []
-    atual = posicoes[0][1]
-    for quadro, x, _y, _w in posicoes:
-        alvo = float(x)
-        atual += (alvo - atual) * FATOR_SUAVIZACAO_CAMERA
-        if suave:
-            quadros = max(1, quadro - suave[-1][0])
-            limite = VELOCIDADE_MAXIMA_CAMERA * quadros / max(1.0, fps)
-            anterior = suave[-1][1]
-            atual = max(anterior - limite, min(anterior + limite, atual))
-        suave.append((quadro, atual))
-    return suave
+    quadros = [p[0] for p in posicoes]
+    brutos = [p[1] for p in posicoes]
+    detectados = sum(1 for x in brutos if x is not None)
+    if detectados < max(3, int(len(brutos) * FRACAO_MINIMA_DETECCOES)):
+        return []
+
+    centros = _preencher_lacunas(brutos)
+    if any(c is None for c in centros):
+        return []
+
+    centros = _mediana_movel([float(c) for c in centros], janela=3)
+
+    # A zona morta e medida em fracao do CROP, nao do quadro inteiro: o que
+    # importa e o quanto a pessoa anda dentro do que o espectador ve.
+    referencia = largura_crop if largura_crop else 0.317
+    zona_morta = max(0.002, referencia * ZONA_MORTA_CAMERA)
+
+    alvos = _alvos_com_zona_morta(centros, zona_morta)
+    tempos = [q / max(1.0, fps) for q in quadros]
+    suaves = _mola_amortecida(
+        alvos, tempos, TEMPO_SUAVIZACAO_CAMERA, VELOCIDADE_MAXIMA_CAMERA
+    )
+    suaves = _media_movel(suaves, janela=5)
+
+    return list(zip(quadros, suaves))
 
 
 def _expressao_crop_x(trajetoria: list, largura: int, crop_w: int,
