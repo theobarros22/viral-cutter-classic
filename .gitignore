@@ -28,3 +28,11 @@ graphify_*_tmp.py
 # Ponteiro do worktree antigo (o repositorio agora e proprio)
 .git-worktree-antigo
 *.err
+
+# Binarios do FFmpeg que acompanham a instalacao local: 434 MB que nao
+# pertencem ao historico. O preparar_ambiente.ps1 os baixa quando faltam.
+tools/ffmpeg.exe
+tools/ffprobe.exe
+
+# Copia de seguranca feita durante a consolidacao das pastas (local).
+_backup-versao-C-09-09/
