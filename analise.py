@@ -406,7 +406,9 @@ Retorne um array JSON com este formato exato:
     print("🤖 Analisando conteúdo com IA...")
     cliente = anthropic.Anthropic()
     resposta = cliente.messages.create(
-        model="claude-opus-4-5",
+        # Segmentar transcrição não exige o modelo mais caro. Sonnet é mais
+        # rápido e barato; troque via variável de ambiente sem mexer no código.
+        model=os.environ.get("VIRALCUTTER_MODELO_IA", "claude-sonnet-5-5"),
         # 2000 tokens truncava o JSON em vídeos longos (muitos segmentos),
         # derrubando o json.loads com erro confuso. 8000 cobre com folga.
         max_tokens=8000,
