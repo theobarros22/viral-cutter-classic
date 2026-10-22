@@ -832,6 +832,8 @@ def etapa3_processar(
             "titulo": segmentos[indice - 1].get("titulo"),
             "arquivo": arquivo,
             "score_viral": segmentos[indice - 1].get("score_viral", 0),
+            "notas": segmentos[indice - 1].get("notas"),
+            "titulo_gancho": segmentos[indice - 1].get("titulo_gancho"),
             "resumo": segmentos[indice - 1].get("resumo", ""),
             "duracao": round(segmentos[indice - 1]["fim"] - segmentos[indice - 1]["inicio"], 1),
             "inicio": segmentos[indice - 1]["inicio"],
@@ -1080,6 +1082,8 @@ def etapa3_processar(
                 "motivos_revisao": motivos_revisao,
                 "instantes_revisao": instantes_revisao,
                 "score_viral": seg.get("score_viral", 0),
+                "notas": seg.get("notas"),
+                "titulo_gancho": seg.get("titulo_gancho"),
                 "resumo": seg.get("resumo", ""),
                 "duracao": round(seg["fim"] - seg["inicio"], 1),
                 # Metadados para o SLICING da etapa 4: com eles as legendas
@@ -1289,7 +1293,11 @@ def etapa4_efeitos_virais(
     if pasta_sfx is None:
         pasta_sfx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "sfx")
 
-    if not (aplicar_legenda or aplicar_zoom or aplicar_sfx):
+    # Titulo-gancho nos primeiros segundos. Desligue com
+    # VIRALCUTTER_TITULO_GANCHO=0 no ambiente.
+    aplicar_titulo_gancho = os.environ.get("VIRALCUTTER_TITULO_GANCHO", "1") != "0"
+
+    if not (aplicar_legenda or aplicar_zoom or aplicar_sfx or aplicar_titulo_gancho):
         log("ðŸŽ¬ Etapa 4 â€” nenhum efeito selecionado. Clipes mantidos como estÃ£o.")
         return resultados
 
@@ -1310,6 +1318,7 @@ def etapa4_efeitos_virais(
         caminho_clip = resultado.get("arquivo", "")
         titulo = resultado.get("titulo", f"Clipe {i}")
         path_ass = None  # garante que existe antes do bloco finally
+        path_gancho = None
 
         if not caminho_clip or not os.path.isfile(caminho_clip):
             log(f"   [{i}/{total}] âš ï¸ Arquivo nÃ£o encontrado, pulando: {caminho_clip}")
@@ -1395,6 +1404,18 @@ def etapa4_efeitos_virais(
                 escaped_ass = path_ass.replace("\\", "/").replace(":", "\\:")
                 filtro_ass = f"ass='{escaped_ass}'"
 
+            filtro_gancho = None
+            if aplicar_titulo_gancho and resultado.get("titulo_gancho"):
+                from gancho import gerar_ass_titulo_gancho
+                fd_g, path_gancho = tempfile.mkstemp(suffix=".ass")
+                os.close(fd_g)
+                if gerar_ass_titulo_gancho(resultado["titulo_gancho"], path_gancho):
+                    escaped_g = path_gancho.replace("\\", "/").replace(":", "\\:")
+                    filtro_gancho = f"ass='{escaped_g}'"
+                    log(f"   [{i}/{total}] Titulo-gancho: {resultado['titulo_gancho']}")
+
+            filtros_texto = [f for f in (filtro_ass, filtro_gancho) if f]
+
             # â”€â”€ 4. Montar filter_complex Ãºnico â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # VÃ­deo: zoom condicional â†’ legenda ASS condicional
             timestamps_zoom = [
@@ -1412,11 +1433,10 @@ def etapa4_efeitos_virais(
                     f"scale=w='iw*({expr_zoom})':h='ih*({expr_zoom})':eval=frame",
                     "crop=1080:1920:(iw-1080)/2:(ih-1920)/2",
                 ]
-                if filtro_ass:
-                    partes_video.append(filtro_ass)
+                partes_video.extend(filtros_texto)
                 vf_video = "[0:v]" + ",".join(partes_video) + "[vout]"
-            elif filtro_ass:
-                vf_video = f"[0:v]{filtro_ass}[vout]"
+            elif filtros_texto:
+                vf_video = "[0:v]" + ",".join(filtros_texto) + "[vout]"
             else:
                 # Sem legenda e sem zoom neste clipe: vÃ­deo passa direto
                 vf_video = "[0:v]null[vout]"
@@ -1562,6 +1582,8 @@ def etapa4_efeitos_virais(
         finally:
             if path_ass and os.path.exists(path_ass):
                 os.remove(path_ass)
+            if path_gancho and os.path.exists(path_gancho):
+                os.remove(path_gancho)
 
     log(
         f"\nðŸŽ‰ Etapa 4 concluÃ­da â€” "

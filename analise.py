@@ -330,10 +330,17 @@ def segmentar_por_assunto(
             else:
                 raise
 
+    # Nota composta das 4 dimensões (quando a IA mandou) e título-gancho limpo
+    from gancho import aplicar_notas, ordenar_por_viralidade
+    segmentos = aplicar_notas(segmentos)
+
     # Ajuste de score por nicho — roda em ambos os modos
     if segmentos and nicho and nicho != "geral":
         print(f"\n🎯 Ajustando scores para nicho: {nicho.upper()}...")
         segmentos = ajustar_score_por_nicho(segmentos, nicho)
+
+    # Do corte mais forte ao mais fraco: o clipe 01 passa a ser o melhor.
+    segmentos = ordenar_por_viralidade(segmentos)
 
     return segmentos
 
@@ -379,6 +386,17 @@ REGRAS:
 - Cada clipe deve ter entre {duracao_min} e {duracao_max} segundos
 - Prefira segmentos com começo e fim claros (início de assunto, conclusão, virada)
 - Dê uma pontuação de viralidade de 1 a 10 para cada clipe
+- NOTAS: avalie cada clipe de 1 a 10 em quatro dimensões, com rigor (reserve
+  9 e 10 para trechos realmente excepcionais):
+    gancho: os primeiros 3 segundos fazem alguém parar de rolar o feed?
+    engajamento: provoca reação, opinião ou comentário?
+    valor: a pessoa sai sabendo, sentindo ou entendendo algo novo?
+    compartilhamento: alguém mandaria isso para um amigo ou repostaria?
+- TITULO_GANCHO: frase de 3 a 7 palavras, em português, para aparecer escrita
+  na tela nos primeiros 3 segundos. Deve criar curiosidade sobre o que o clipe
+  entrega, sem prometer algo que o trecho não cumpre e sem emoji.
+  Exemplos bons: "Ele quase desistiu aqui", "O erro que custou o casamento".
+  Exemplos ruins: "Vídeo incrível", "Assista até o final".
 - HOOK: para cada clipe, identifique a frase de MAIOR impacto dentro dele
   (a mais chocante, curiosa ou emocionante — aquela que faria alguém parar de
   rolar o feed). Informe hook_inicio e hook_fim em timestamps ABSOLUTOS da
@@ -397,6 +415,8 @@ Retorne um array JSON com este formato exato:
     "inicio": 12.5,
     "fim": 67.3,
     "score_viral": 8,
+    "notas": {{"gancho": 8, "engajamento": 7, "valor": 6, "compartilhamento": 7}},
+    "titulo_gancho": "Frase curta de curiosidade",
     "resumo": "Por que este trecho é viral: motivo curto",
     "hook_inicio": 45.2,
     "hook_fim": 47.8

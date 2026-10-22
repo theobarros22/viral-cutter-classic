@@ -652,6 +652,14 @@ def ao_processar(
             relatorio += f"  [{i}] {r['titulo']}\n"
             relatorio += f"      ⏱️ {r['duracao']}s  |  ⭐ {r['score_viral']}/10\n"
             relatorio += f"      💡 {r['resumo']}\n"
+            if r.get("notas"):
+                _n = r["notas"]
+                relatorio += (
+                    f"      Notas: gancho {_n['gancho']:.0f} | engajamento {_n['engajamento']:.0f}"
+                    f" | valor {_n['valor']:.0f} | compartilhamento {_n['compartilhamento']:.0f}\n"
+                )
+            if r.get("titulo_gancho"):
+                relatorio += f"      Titulo na tela: {r['titulo_gancho']}\n"
             if r.get("arquivo_viral"):
                 relatorio += f"      ⚡ {os.path.basename(r['arquivo_viral'])}\n"
             relatorio += "\n"
