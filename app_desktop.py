@@ -22,6 +22,13 @@ import os
 import sys
 import time
 
+# Modelos de IA (faster-whisper etc.) ficam ao lado do app, no mesmo disco.
+# O HF_HOME global do usuario pode apontar para um disco USB lento ou com
+# defeito; definido aqui, antes de qualquer import que leia a variavel.
+os.environ["HF_HOME"] = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "modelos"
+)
+
 import runtime
 
 TITULO_JANELA = "Viral Cutter Classic"

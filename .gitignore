@@ -36,3 +36,5 @@ tools/ffprobe.exe
 
 # Copia de seguranca feita durante a consolidacao das pastas (local).
 _backup-versao-C-09-09/
+
+modelos/

@@ -162,7 +162,10 @@ def nvenc_disponivel() -> bool:
         resultado = subprocess.run(
             [
                 ffmpeg, "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=size=16x16:rate=1",
+                # O NVENC recusa quadros menores que ~145x49 (erro -22). Com
+                # 16x16 este teste falhava sempre e o app caia para a CPU
+                # mesmo com GPU NVIDIA funcional. 256x256 fica com folga.
+                "-f", "lavfi", "-i", "color=size=256x256:rate=1",
                 "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
             ],
             capture_output=True,

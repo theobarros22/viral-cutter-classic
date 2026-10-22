@@ -23,5 +23,9 @@ If sh.AppActivate("Viral Cutter Classic") Then
     WScript.Quit 0
 End If
 
+' Modelos de IA no mesmo disco do app, nunca no HF_HOME global (que pode
+' apontar para um disco USB). Vale so para este processo e seus filhos.
+sh.Environment("PROCESS")("HF_HOME") = base & "\modelos"
+
 ' ShellExecute abre a janela nativa normalmente; pythonw evita console.
 shellApp.ShellExecute pyw, Chr(34) & base & "\app_desktop.py" & Chr(34), base, "open", 1
