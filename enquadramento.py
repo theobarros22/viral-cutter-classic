@@ -31,7 +31,7 @@ Removido — a mira podia cair num objeto decorativo com formato de rosto
 (busto na estante) em vez de gente de verdade. Agora o alvo do crop vem
 de QUEM FALA (voz + movimento labial, sinal já validado por outra etapa
 do pipeline) — decoração nunca fala, então nunca vira alvo. Histórico
-completo na seção 10/11 do RELATORIO_COMPLETO_2026-07-03.md.
+completo na seção 10/11 do docs/internal/RELATORIO_COMPLETO_2026-07-03.md.
 """
 
 import cv2

@@ -12,15 +12,15 @@ if (-not (Test-Path -LiteralPath $destino)) {
 $arquivos = @(
     ".gitignore",
     "analise.py",
-    "AUDITORIA.md",
+    "docs\internal\AUDITORIA.md",
     "checkpoint.py",
-    "CONTINUAR_PROJETO.md",
+    "docs\internal\CONTINUAR_PROJETO.md",
     "cortes.py",
     "diagnostico.py",
     "enquadramento.py",
-    "ESTADO_ATUAL.json",
+    "docs\internal\ESTADO_ATUAL.json",
     "face_detector.tflite",
-    "FUNCIONALIDADES_ADOTAVEIS.md",
+    "docs\internal\FUNCIONALIDADES_ADOTAVEIS.md",
     "ffmpeg_utils.py",
     "gerar_exe.bat",
     "gerar_exe_release.bat",
@@ -33,8 +33,8 @@ $arquivos = @(
     "reframe.py",
     "requirements.txt",
     "requirements-lock.txt",
-    "RELATORIO_FINAL.md",
-    "ROADMAP_PRODUTO.md",
+    "docs\internal\RELATORIO_FINAL.md",
+    "docs\internal\ROADMAP_PRODUTO.md",
     "rostos.py",
     "runtime.py",
     "smart_cut.py",
@@ -42,8 +42,8 @@ $arquivos = @(
     "validar_build.ps1",
     "version_info.txt",
     "viral_cutter.spec",
-    "PLANO_EXECUTAVEL_PROFISSIONAL.md",
-    "MATRIZ_VALIDACAO.md",
+    "docs\internal\PLANO_EXECUTAVEL_PROFISSIONAL.md",
+    "docs\internal\MATRIZ_VALIDACAO.md",
     "preparar_ambiente.ps1",
     "PREPARAR_AMBIENTE.bat"
 )
@@ -58,8 +58,12 @@ foreach ($arquivo in $arquivos) {
         throw "Arquivo auditado ausente: $fonte"
     }
 
+    New-Item -ItemType Directory -Path (Split-Path -Parent $alvo) -Force | Out-Null
+
     if (Test-Path -LiteralPath $alvo) {
-        Copy-Item -LiteralPath $alvo -Destination (Join-Path $backup $arquivo) -Force
+        $alvoBackup = Join-Path $backup $arquivo
+        New-Item -ItemType Directory -Path (Split-Path -Parent $alvoBackup) -Force | Out-Null
+        Copy-Item -LiteralPath $alvo -Destination $alvoBackup -Force
     }
 
     Copy-Item -LiteralPath $fonte -Destination $alvo -Force
