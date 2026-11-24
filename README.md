@@ -1,6 +1,5 @@
 # Viral Cutter Classic
 
-[![Tests](https://github.com/theobarros22/viral-cutter-classic/actions/workflows/tests.yml/badge.svg)](https://github.com/theobarros22/viral-cutter-classic/actions/workflows/tests.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
