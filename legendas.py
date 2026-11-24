@@ -10,7 +10,7 @@ Remotion vive de fato. No Viralume ele existe para:
    agrupar_palavras, importar_srt, exportar_srt)
 O render Remotion (aplicar_legendas) só funciona se a pasta remotion/ com
 node_modules existir — no Viralume ela não existe, e o produto de legendas
-animadas é o v2. Ver ROADMAP_PRODUTO.md.
+animadas é o v2. Ver docs/internal/ROADMAP_PRODUTO.md.
 
 Fluxo:
 1. Recebe: vídeo cortado + palavras com timestamps + template escolhido
